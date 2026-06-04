@@ -4,6 +4,12 @@
 
 ![QueryMind](https://img.shields.io/badge/QueryMind-AI%20Research%20Agent-6366f1?style=for-the-badge)
 
+
+
+https://github.com/user-attachments/assets/c80ddf09-8af8-4381-914c-cc3bfa2e2a70
+
+
+
 ---
 
 ## Architecture

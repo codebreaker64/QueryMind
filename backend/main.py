@@ -172,3 +172,25 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "service": "QueryMind"}
+
+
+# ── Dev / Test Utilities ─────────────────────────────────────────────
+
+@app.post("/test/hitl/{session_id}")
+async def test_hitl(session_id: str):
+    """
+    DEV ONLY — manually fire a 'pause' event on an active WebSocket session.
+    Use this to verify the HITL modal without waiting for the LLM to call ask_user.
+
+    Steps:
+      1. Start a research session via POST /research
+      2. Connect the WebSocket at /ws/{session_id}
+      3. POST to /test/hitl/{session_id} to trigger the modal immediately
+    """
+    if not manager.is_connected(session_id):
+        return {"error": "No active WebSocket for this session_id"}
+    await manager.send_event(session_id, {
+        "type": "pause",
+        "question": "This is a test clarification question — what would you like to know more about?",
+    })
+    return {"status": "pause event sent", "session_id": session_id}

@@ -1,31 +1,107 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import './index.css'
-import SearchBar from './SearchBar'
+import { Theme } from '@astryxdesign/core'
+import { stoneTheme } from '@astryxdesign/theme-stone/built'
+import { VStack, HStack, Layout, LayoutContent } from '@astryxdesign/core/Layout'
+import { Text, Heading } from '@astryxdesign/core/Text'
+import { Button } from '@astryxdesign/core/Button'
+import { Card } from '@astryxdesign/core/Card'
+import { ClickableCard } from '@astryxdesign/core/ClickableCard'
+import { Icon } from '@astryxdesign/core/Icon'
+import { Grid } from '@astryxdesign/core/Grid'
+import { Token } from '@astryxdesign/core/Token'
+import { ToggleButton, ToggleButtonGroup } from '@astryxdesign/core/ToggleButton'
+import { useResizable, ResizeHandle } from '@astryxdesign/core/Resizable'
+import {
+  ChatComposer,
+  ChatComposerInput,
+  ChatMessage,
+  ChatMessageBubble,
+  ChatMessageList,
+} from '@astryxdesign/core/Chat'
+import { Avatar } from '@astryxdesign/core/Avatar'
+import {
+  SparklesIcon,
+  CodeBracketIcon,
+  PencilSquareIcon,
+  MagnifyingGlassIcon,
+  LightBulbIcon,
+  Bars3Icon,
+  PlusIcon,
+  ArrowRightIcon
+} from '@heroicons/react/24/outline'
+
+import useAuth from './useAuth'
+import AuthScreen from './AuthScreen'
+import HistorySidebar from './HistorySidebar'
 import AnswerPanel from './AnswerPanel'
 import HITLModal from './HITLModal'
 
-/**
- * App — Perplexity-style layout with sidebar + centered search.
- */
-
 const API_BASE = ''
 
-// Sidebar navigation items
-const NAV_ITEMS = [
-  {
-    label: 'New',
-    icon: (
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-      </svg>
-    ),
-  },
+const CATEGORIES = [
+  { key: 'writing', label: 'Writing', icon: PencilSquareIcon },
+  { key: 'coding', label: 'Coding', icon: CodeBracketIcon },
+  { key: 'research', label: 'Research', icon: MagnifyingGlassIcon },
+  { key: 'creative', label: 'Creative', icon: LightBulbIcon },
 ]
 
-
+const CATEGORY_SUGGESTIONS = {
+  writing: [
+    {
+      heading: 'Draft a project brief',
+      body: 'Outline goals, deliverables, and timelines',
+      prompt: 'Help me draft a comprehensive project brief for a new mobile app.',
+    },
+    {
+      heading: 'Improve research tone',
+      body: 'Refine the vocabulary and tone of a text',
+      prompt: 'Refine this text to sound more academic and analytical: ',
+    },
+  ],
+  coding: [
+    {
+      heading: 'Optimize algorithm',
+      body: 'Improve time complexity of a function',
+      prompt: 'Analyze and optimize this sorting algorithm for large datasets: ',
+    },
+    {
+      heading: 'Explain JWT security',
+      body: 'Understand token refreshing best practices',
+      prompt: 'Explain the best practices for silent JWT token refresh flows.',
+    },
+  ],
+  research: [
+    {
+      heading: 'Compare market trends',
+      body: 'Analyze pros/cons of vertical tech stacks',
+      prompt: 'Research and compare the current trends in autonomous agent frameworks.',
+    },
+    {
+      heading: 'Find best practices',
+      body: 'Standard structures for API design',
+      prompt: 'What are the industry best practices for REST API error codes?',
+    },
+  ],
+  creative: [
+    {
+      heading: 'Brainstorm brand names',
+      body: 'Generate catchy titles for a startup',
+      prompt: 'Brainstorm creative name ideas for a security analytics SaaS.',
+    },
+    {
+      heading: 'Write landing page copy',
+      body: 'Draft headlines and value propositions',
+      prompt: 'Write landing page copy for a wake-up-to-answers research app.',
+    },
+  ],
+}
 
 export default function App() {
-  // Core state
+  const auth = useAuth()
+  const [isAnonymous, setIsAnonymous] = useState(false)
+
+  // Core research state
   const [isResearching, setIsResearching] = useState(false)
   const [currentQuery, setCurrentQuery] = useState('')
   const [answer, setAnswer] = useState('')
@@ -36,13 +112,30 @@ export default function App() {
   const [error, setError] = useState(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
 
+  // Chat Landing category selection
+  const [category, setCategory] = useState(null)
+
+  // Session history refresh state
+  const [activeSessionId, setActiveSessionId] = useState(null)
+  const [refreshHistoryKey, setRefreshHistoryKey] = useState(0)
+
   // HITL state
   const [hitlQuestion, setHitlQuestion] = useState(null)
+
+  // Resizable panel setup for conversation layout
+  const artifactResize = useResizable({
+    defaultSize: 550,
+    minSizePx: 380,
+    maxSizePx: 800,
+    autoSaveId: 'querymind-artifact-panel',
+  })
 
   // WebSocket ref
   const wsRef = useRef(null)
 
   const handleSearch = useCallback(async (goal) => {
+    if (!goal.trim()) return
+
     setCurrentQuery(goal)
     setAnswer('')
     setSources([])
@@ -54,9 +147,10 @@ export default function App() {
     setIsResearching(true)
 
     try {
+      const headers = auth.authHeaders({ 'Content-Type': 'application/json' })
       const response = await fetch(`${API_BASE}/research`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ goal }),
       })
 
@@ -66,6 +160,8 @@ export default function App() {
 
       const data = await response.json()
       const sessionId = data.session_id
+      setActiveSessionId(sessionId)
+      setRefreshHistoryKey(k => k + 1)
 
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       const wsHost = window.location.host
@@ -100,7 +196,7 @@ export default function App() {
       setIsResearching(false)
       setIsThinking(false)
     }
-  }, [])
+  }, [auth])
 
   const handleWebSocketEvent = useCallback((msg) => {
     switch (msg.type) {
@@ -135,6 +231,8 @@ export default function App() {
         setIsDone(true)
         setIsResearching(false)
         setSearches([])
+        // Refresh sidebar history
+        setRefreshHistoryKey(k => k + 1)
         break
       case 'error':
         setError(msg.message || 'An unexpected error occurred')
@@ -164,122 +262,271 @@ export default function App() {
     setIsDone(false)
     setError(null)
     setIsResearching(false)
+    setActiveSessionId(null)
     if (wsRef.current) {
       wsRef.current.close()
       wsRef.current = null
     }
   }
 
+  const handleLoadSession = useCallback(async (sessionId) => {
+    setActiveSessionId(sessionId)
+    setIsResearching(false)
+    setIsThinking(false)
+    setIsDone(true)
+    setError(null)
+    setHitlQuestion(null)
+
+    try {
+      const res = await auth.authFetch(`/sessions/${sessionId}`)
+      if (res.ok) {
+        const data = await res.json()
+        setCurrentQuery(data.goal || '')
+        setAnswer(data.answer || '')
+        setSources(data.sources || [])
+        setSearches([])
+      } else {
+        setError('Failed to load session details')
+      }
+    } catch (err) {
+      setError('Error loading session')
+    }
+  }, [auth])
+
+  const isAuthenticated = auth.isAuthenticated || isAnonymous
+  const user = auth.user || (isAnonymous ? { name: 'Anonymous User', email: 'anonymous@querymind.ai' } : null)
+
+  if (auth.isLoading) {
+    return (
+      <div style={{ display: 'flex', minHeight: '100vh', alignItems: 'center', justifyContent: 'center', backgroundColor: '#1C1917' }}>
+        <div className="thinking-dots">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+      </div>
+    )
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <Theme theme={stoneTheme} mode="dark">
+        <AuthScreen onLogin={async (credential) => {
+          if (credential === null) {
+            setIsAnonymous(true)
+          } else {
+            await auth.login(credential)
+          }
+        }} />
+      </Theme>
+    )
+  }
+
   const isLanding = !isResearching && !isDone && !answer
+  const suggestions = category ? CATEGORY_SUGGESTIONS[category] : null
 
   return (
-    <div className="h-screen flex overflow-hidden">
-      {/* ── Sidebar ──────────────────────────────── */}
-      <aside
-        className={`
-          shrink-0 flex flex-col h-full
-          bg-[var(--bg-secondary)] border-r border-[var(--border-subtle)]
-          transition-all duration-300 ease-out
-          ${sidebarOpen ? 'w-56' : 'w-0 border-r-0 overflow-hidden'}
-        `}
-      >
-        {/* Sidebar header */}
-        <div className="flex items-center justify-between px-5 py-6">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-              <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z" />
-              </svg>
-            </div>
-            <span className="text-base font-semibold text-[var(--text-primary)]">QueryMind</span>
-          </div>
-          <button
-            onClick={() => setSidebarOpen(false)}
-            className="p-1 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface)] transition-colors cursor-pointer"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-            </svg>
-          </button>
-        </div>
+    <Theme theme={stoneTheme} mode="dark">
+      <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', backgroundColor: 'var(--color-background-body)' }}>
+        {/* ── Sidebar ── */}
+        <HistorySidebar
+          isOpen={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          onNewSearch={handleNewSearch}
+          onLoadSession={handleLoadSession}
+          activeSessionId={activeSessionId}
+          authFetch={auth.authFetch}
+          user={user}
+          onLogout={() => {
+            auth.logout()
+            setIsAnonymous(false)
+            handleNewSearch()
+          }}
+          refreshKey={refreshHistoryKey}
+        />
 
-        {/* Nav items */}
-        <nav className="flex-1 px-3 py-3 space-y-6  ">
-          {NAV_ITEMS.map((item) => (
-            <button
-              key={item.label}
-              onClick={item.label === 'New' ? handleNewSearch : undefined}
-              className={`
-                w-full flex items-center gap-4 px-5 py-4.5 rounded-xl text-sm font-medium
-                transition-colors cursor-pointer
-                ${item.label === 'New'
-                  ? 'text-[var(--text-primary)] hover:bg-[var(--bg-surface)]'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface)]'
-                }
-              `}
-            >
-              <span className="scale-110 shrink-0">{item.icon}</span>
-              {item.label}
-            </button>
-          ))}
+        {/* ── Main panel ── */}
+        <VStack style={{ flex: 1, minWidth: 0, height: '100%' }}>
+          {/* Header */}
+          <HStack justify="between" vAlign="center" style={{ padding: 'var(--spacing-4)', borderBottom: '1px solid var(--color-border)' }} width="100%">
+            <HStack gap={3} vAlign="center">
+              {!sidebarOpen && (
+                <Button
+                  label="Open menu"
+                  variant="ghost"
+                  size="sm"
+                  icon={<Icon icon={Bars3Icon} size="sm" />}
+                  isIconOnly
+                  onClick={() => setSidebarOpen(true)}
+                />
+              )}
+              <HStack gap={2} vAlign="center">
+                <Icon icon={SparklesIcon} size="sm" style={{ color: 'var(--color-accent)' }} />
+                <Heading level={4} style={{ color: 'var(--color-accent)', margin: 0 }}>
+                  QueryMind
+                </Heading>
+              </HStack>
+            </HStack>
+            {!isLanding && (
+              <Button
+                label="New Session"
+                variant="secondary"
+                size="sm"
+                icon={<Icon icon={PlusIcon} size="sm" />}
+                onClick={handleNewSearch}
+              />
+            )}
+          </HStack>
 
-        </nav>
-      </aside>
+          {/* ── Landing State (Chat landing page) ── */}
+          {isLanding && (
+            <Layout height="fill" contentWidth={720} padding={6} style={{ overflowY: 'auto' }}>
+              <LayoutContent>
+                <VStack gap={8} vAlign="center" style={{ minHeight: '100%', justifyContent: 'center', paddingBottom: '10vh' }}>
+                  {/* Greeting */}
+                  <VStack gap={2} hAlign="center">
+                    <HStack gap={2} vAlign="center">
+                      <Icon icon={SparklesIcon} size="md" style={{ color: 'var(--color-accent)' }} />
+                      <Text type="large" as="h2" weight="bold">
+                        Hi, {user?.name || 'Researcher'}
+                      </Text>
+                    </HStack>
+                    <Heading level={1} type="display-2" justify="center">
+                      What would you like to research today?
+                    </Heading>
+                  </VStack>
 
-      {/* ── Main content ─────────────────────────── */}
-      <div className="flex-1 flex flex-col min-w-0 h-full">
-        {/* Top bar */}
-        <header className="shrink-0 flex items-center justify-between px-5 py-3">
-          <div className="flex items-center gap-3">
-            {!sidebarOpen && (
-              <button
-                onClick={() => setSidebarOpen(true)}
-                className="p-1.5 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface)] transition-colors cursor-pointer"
+                  {/* Composer / Search Bar */}
+                  <ChatComposer
+                    onSubmit={() => {}}
+                    placeholder="Ask autonomous agents to gather web intelligence..."
+                    input={
+                      <ChatComposerInput
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault()
+                            const text = e.currentTarget.textContent || ''
+                            handleSearch(text)
+                          }
+                        }}
+                        style={{ minHeight: 80 }}
+                      />
+                    }
+                  />
+
+                  {/* Category toggles + suggestions */}
+                  <VStack gap={6} hAlign="center" width="100%">
+                    <ToggleButtonGroup
+                      label="Research Category"
+                      value={category}
+                      onChange={setCategory}
+                      size="lg"
+                    >
+                      {CATEGORIES.map(cat => (
+                        <ToggleButton
+                          key={cat.key}
+                          value={cat.key}
+                          label={cat.label}
+                          icon={<Icon icon={cat.icon} size="sm" />}
+                        />
+                      ))}
+                    </ToggleButtonGroup>
+
+                    {suggestions && (
+                      <Grid columns={{ minWidth: 280 }} gap={3} width="100%">
+                        {suggestions.map(s => (
+                          <ClickableCard
+                            key={s.heading}
+                            label={s.heading}
+                            variant="muted"
+                            padding={3}
+                            onClick={() => handleSearch(s.prompt)}
+                          >
+                            <VStack gap={0.5}>
+                              <Heading level={4}>{s.heading}</Heading>
+                              <Text type="body" color="secondary" size="xsm">
+                                {s.body}
+                              </Text>
+                            </VStack>
+                          </ClickableCard>
+                        ))}
+                      </Grid>
+                    )}
+                  </VStack>
+                </VStack>
+              </LayoutContent>
+            </Layout>
+          )}
+
+          {/* ── Conversation State (Split panel conversation) ── */}
+          {!isLanding && (
+            <div style={{ flex: 1, display: 'flex', width: '100%', minHeight: 0, overflow: 'hidden' }}>
+              {/* Left Column: Chat Feed */}
+              <VStack style={{ flex: 1, minWidth: 0, height: '100%', borderRight: '1px solid var(--color-border)' }}>
+                <div style={{ flex: 1, overflowY: 'auto', padding: 'var(--spacing-6)' }}>
+                  <ChatMessageList>
+                    {/* User message */}
+                    {currentQuery && (
+                      <ChatMessage sender="user">
+                        <ChatMessageBubble>
+                          <Text type="body">{currentQuery}</Text>
+                        </ChatMessageBubble>
+                      </ChatMessage>
+                    )}
+
+                    {/* Agent status/message */}
+                    <ChatMessage sender="assistant" avatar={<Avatar name="Agent" size="small" />}>
+                      <ChatMessageBubble variant="ghost">
+                        <Text type="body">
+                          {isDone ? 'Research completed. You can view findings in the artifact panel.' : 'Autonomous research agents actively crawling, analyzing, and synthesizing findings...'}
+                        </Text>
+                      </ChatMessageBubble>
+                    </ChatMessage>
+                  </ChatMessageList>
+                </div>
+
+                {/* Follow up Composer */}
+                <div style={{ padding: 'var(--spacing-4)', borderTop: '1px solid var(--color-border)', backgroundColor: 'var(--color-background-surface)' }}>
+                  <ChatComposer
+                    onSubmit={() => {}}
+                    placeholder="Ask a follow-up or refine the research..."
+                    input={
+                      <ChatComposerInput
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault()
+                            const text = e.currentTarget.textContent || ''
+                            handleSearch(text)
+                          }
+                        }}
+                      />
+                    }
+                  />
+                </div>
+              </VStack>
+
+              {/* Resize Handle */}
+              <ResizeHandle
+                direction="horizontal"
+                resizable={artifactResize.props}
+                isReversed
+                pillPlacement="start"
+                hasDivider
+                label="Resize results panel"
+              />
+
+              {/* Right Column: Resizable Artifact Panel (AnswerPanel) */}
+              <Card
+                variant="transparent"
+                height="100%"
+                style={{
+                  width: artifactResize.size,
+                  flexShrink: 0,
+                  overflow: 'hidden',
+                  padding: 'var(--spacing-6)',
+                  backgroundColor: 'var(--color-background-surface)'
+                }}
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
-                </svg>
-              </button>
-            )}
-          </div>
-          <div className="flex items-center gap-3">
-            {isResearching && (
-              <div className="flex items-center gap-2 text-xs text-[var(--text-muted)] glass-card px-3 py-1.5 animate-fade-in">
-                <div className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-pulse" />
-                Researching
-              </div>
-            )}
-          </div>
-        </header>
-
-        {/* ── Landing state ──────────────────── */}
-        {isLanding && (
-          <main className="flex-1 flex flex-col items-center justify-center px-6 pb-24">
-            <div className="w-full max-w-xl animate-fade-in-up">
-              <h1 className="text-center text-4xl font-light text-[var(--text-primary)] tracking-tight" style={{ marginBottom: '1rem' }}>
-                Query<span className="gradient-text font-medium">Mind</span>
-              </h1>
-              <SearchBar onSearch={handleSearch} isResearching={isResearching} />
-            </div>
-          </main>
-        )}
-
-        {/* ── Chat state ─────────────────────── */}
-        {!isLanding && (
-          <>
-            {/* Scrollable content */}
-            <div className="flex-1 overflow-auto px-6 pb-4 flex justify-center">
-              <div className="w-full max-w-xl pt-6">
-                {/* User query bubble */}
-                {currentQuery && (
-                  <div className="flex justify-end mb-8 animate-fade-in">
-                    <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-2xl rounded-tr-sm px-5 py-3 max-w-md">
-                      <p className="text-sm text-[var(--text-primary)]">{currentQuery}</p>
-                    </div>
-                  </div>
-                )}
-
-                {/* Answer panel */}
                 <AnswerPanel
                   answer={answer}
                   sources={sources}
@@ -288,23 +535,17 @@ export default function App() {
                   isDone={isDone}
                   error={error}
                 />
-              </div>
+              </Card>
             </div>
-
-            {/* Fixed bottom input */}
-            <div className="shrink-0 px-6 py-4 border-t border-[var(--border-subtle)] bg-[var(--bg-primary)] flex justify-center">
-              <div className="w-full max-w-xl">
-                <SearchBar onSearch={handleSearch} isResearching={isResearching} />
-              </div>
-            </div>
-          </>
-        )}
+          )}
+        </VStack>
       </div>
 
-      {/* ── HITL Modal ───────────────────────────── */}
+      {/* ── HITL Modal ── */}
       {hitlQuestion && (
         <HITLModal question={hitlQuestion} onSubmit={handleHITLResume} />
       )}
-    </div>
+    </Theme>
   )
 }
+

@@ -56,6 +56,9 @@ async def run_agent(
     goal: str,
     session_id: str,
     ws_manager,
+    redis_store=None,
+    user_id: str = "anonymous",
+    attachments: list[dict] | None = None,
 ) -> None:
     """
     Run the agentic research loop.
@@ -64,6 +67,9 @@ async def run_agent(
         goal: The user's research question/goal.
         session_id: Unique session identifier.
         ws_manager: WebSocket connection manager for streaming events.
+        redis_store: Optional RedisStore for session persistence.
+        user_id: Owner's user ID for session scoping.
+        attachments: Optional list of dicts with 'filename' and 'content' keys.
     """
     client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
     state_manager = StateManager()
@@ -72,10 +78,13 @@ async def run_agent(
     # Register session for HITL
     register_session(session_id)
 
+    # Build user message with optional attachments
+    user_content = _build_user_message(goal, attachments)
+
     # Initialize message history
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": goal},
+        {"role": "user", "content": user_content},
     ]
 
     search_history: list[str] = []
@@ -203,15 +212,42 @@ async def run_agent(
                     "answer": final_answer,
                     "sources": sources_found,
                 })
+
+                # Persist to Redis
+                if redis_store:
+                    await redis_store.save_session(user_id, session_id, {
+                        "goal": goal,
+                        "answer": final_answer,
+                        "sources": sources_found,
+                        "searches": search_history,
+                        "attachments": [
+                            {"filename": a["filename"]}
+                            for a in (attachments or [])
+                        ],
+                    })
+
                 break
 
         else:
             # Max steps reached
+            partial_answer = (
+                "I've reached the maximum number of research steps. "
+                "Here's what I found so far based on my research."
+            )
             await ws_manager.send_event(session_id, {
                 "type": "done",
-                "answer": "I've reached the maximum number of research steps. Here's what I found so far based on my research.",
+                "answer": partial_answer,
                 "sources": sources_found,
             })
+
+            # Persist partial result
+            if redis_store:
+                await redis_store.save_session(user_id, session_id, {
+                    "goal": goal,
+                    "answer": partial_answer,
+                    "sources": sources_found,
+                    "searches": search_history,
+                })
 
     except Exception as e:
         await ws_manager.send_event(session_id, {
@@ -223,6 +259,26 @@ async def run_agent(
         # Cleanup
         unregister_session(session_id)
         state_manager.clear(session_id)
+
+
+def _build_user_message(
+    goal: str,
+    attachments: list[dict] | None = None,
+) -> str:
+    """Build the user message, prepending any attachment content."""
+    parts = []
+
+    if attachments:
+        for att in attachments:
+            filename = att.get("filename", "unknown")
+            content = att.get("content", "")
+            parts.append(
+                f"[Attached file: {filename}]\n{content}\n[End of attachment]"
+            )
+        parts.append("")  # blank line separator
+
+    parts.append(goal)
+    return "\n".join(parts)
 
 
 def _build_context(

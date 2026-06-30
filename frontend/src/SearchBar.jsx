@@ -41,7 +41,7 @@ export default function SearchBar({ onSearch, isResearching }) {
       <div className="rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] overflow-hidden transition-all duration-300 hover:border-[var(--border-accent)] focus-within:border-[var(--border-accent)] focus-within:shadow-[0_0_30px_rgba(99,102,241,0.1)]">
 
         {/* Textarea row — left padding gives breathing room for the placeholder */}
-        <div style={{ paddingLeft: '1.5rem', paddingRight: '1.25rem', paddingTop: '1.25rem', paddingBottom: '0.5rem' }}>
+        <div style={{ paddingLeft: '1.75rem', paddingRight: '1.5rem', paddingTop: '1.5rem', paddingBottom: '0.75rem' }}>
           <textarea
             ref={textareaRef}
             id="search-input"
@@ -51,21 +51,21 @@ export default function SearchBar({ onSearch, isResearching }) {
             placeholder="Ask anything..."
             disabled={isResearching}
             rows={1}
-            className="w-full bg-transparent outline-none resize-none text-[var(--text-primary)] text-base placeholder:text-[var(--text-muted)] disabled:opacity-50 disabled:cursor-not-allowed leading-relaxed"
+            className="w-full bg-transparent outline-none resize-none text-[var(--text-primary)] text-lg placeholder:text-[var(--text-muted)] disabled:opacity-50 disabled:cursor-not-allowed leading-relaxed"
           />
         </div>
 
         {/* Submit button row */}
         <div
           className="flex items-center justify-end"
-          style={{ paddingLeft: '1.5rem', paddingRight: '0.875rem', paddingBottom: '0.875rem', paddingTop: '0.25rem' }}
+          style={{ paddingLeft: '1.75rem', paddingRight: '1rem', paddingBottom: '1rem', paddingTop: '0.25rem' }}
         >
           <button
             id="search-button"
             type="button"
             onClick={handleSubmit}
             disabled={!query.trim() || isResearching}
-            style={{ padding: '0.6rem' }}
+            style={{ padding: '0.7rem' }}
             className={`rounded-full transition-all duration-200 ease-out ${query.trim() && !isResearching
                 ? 'bg-[var(--accent)] text-white hover:bg-[var(--accent-bright)] hover:scale-105 active:scale-95 cursor-pointer'
                 : 'bg-[var(--bg-surface-hover)] text-[var(--text-muted)] cursor-not-allowed'

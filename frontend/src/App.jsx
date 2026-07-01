@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import './index.css'
 import { Theme } from '@astryxdesign/core'
 import { stoneTheme } from '@astryxdesign/theme-stone/built'
@@ -9,7 +9,6 @@ import { Card } from '@astryxdesign/core/Card'
 import { ClickableCard } from '@astryxdesign/core/ClickableCard'
 import { Icon } from '@astryxdesign/core/Icon'
 import { Grid } from '@astryxdesign/core/Grid'
-import { Token } from '@astryxdesign/core/Token'
 import { ToggleButton, ToggleButtonGroup } from '@astryxdesign/core/ToggleButton'
 import { useResizable, ResizeHandle } from '@astryxdesign/core/Resizable'
 import {
@@ -28,16 +27,24 @@ import {
   LightBulbIcon,
   Bars3Icon,
   PlusIcon,
-  ArrowRightIcon
 } from '@heroicons/react/24/outline'
 
 import useAuth from './useAuth'
 import AuthScreen from './AuthScreen'
 import HistorySidebar from './HistorySidebar'
-import AnswerPanel from './AnswerPanel'
+import SourceCard from './SourceCard'
 import HITLModal from './HITLModal'
 
 const API_BASE = ''
+
+function formatMessageContent(content) {
+  if (!content) return ''
+  // Remove <thought>...</thought> and <|think|>...</|think|> blocks (case-insensitive, matching across multiple lines)
+  return content
+    .replace(/<thought>[\s\S]*?<\/thought>/gi, '')
+    .replace(/<\|think\|>[\s\S]*?<\/\|think\|>/gi, '')
+    .trim()
+}
 
 const CATEGORIES = [
   { key: 'writing', label: 'Writing', icon: PencilSquareIcon },
@@ -103,8 +110,7 @@ export default function App() {
 
   // Core research state
   const [isResearching, setIsResearching] = useState(false)
-  const [currentQuery, setCurrentQuery] = useState('')
-  const [answer, setAnswer] = useState('')
+  const [chatMessages, setChatMessages] = useState([])
   const [sources, setSources] = useState([])
   const [searches, setSearches] = useState([])
   const [isThinking, setIsThinking] = useState(false)
@@ -122,36 +128,173 @@ export default function App() {
   // HITL state
   const [hitlQuestion, setHitlQuestion] = useState(null)
 
-  // Resizable panel setup for conversation layout
+  // Resizable panel setup for sources
   const artifactResize = useResizable({
-    defaultSize: 550,
-    minSizePx: 380,
-    maxSizePx: 800,
-    autoSaveId: 'querymind-artifact-panel',
+    defaultSize: 320,
+    minSizePx: 250,
+    maxSizePx: 500,
+    autoSaveId: 'querymind-sources-panel',
   })
 
   // WebSocket ref
   const wsRef = useRef(null)
 
+  const handleWebSocketEvent = useCallback((msg) => {
+    switch (msg.type) {
+      case 'searching':
+        setIsThinking(true)
+        setSearches(prev => [...prev, msg.query])
+        setChatMessages(prev => {
+          const updated = [...prev];
+          const lastIdx = updated.length - 1;
+          if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
+            updated[lastIdx] = {
+              ...updated[lastIdx],
+              isThinking: true
+            };
+          }
+          return updated;
+        });
+        break
+
+      case 'source_found':
+        if (msg.source) {
+          setSources(prev => [...prev, msg.source])
+          setSearches(prev => {
+            const u = [...prev];
+            if (u.length > 0) u.shift();
+            return u;
+          })
+          setChatMessages(prev => {
+            const updated = [...prev];
+            const lastIdx = updated.length - 1;
+            if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
+              updated[lastIdx] = {
+                ...updated[lastIdx],
+                isThinking: true
+              };
+            }
+            return updated;
+          });
+        }
+        break
+
+      case 'reasoning':
+        setIsThinking(true)
+        if (msg.content) {
+          setChatMessages(prev => {
+            const updated = [...prev];
+            const lastIdx = updated.length - 1;
+            if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
+              updated[lastIdx] = {
+                ...updated[lastIdx],
+                content: msg.content,
+                isThinking: true
+              };
+            }
+            return updated;
+          });
+        }
+        break
+
+      case 'pause':
+        setHitlQuestion(msg.question)
+        setIsThinking(false)
+        setChatMessages(prev => {
+          const updated = [...prev];
+          const lastIdx = updated.length - 1;
+          if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
+            updated[lastIdx] = {
+              ...updated[lastIdx],
+              isThinking: false
+            };
+          }
+          return updated;
+        });
+        break
+
+      case 'done':
+        setIsThinking(false)
+        setIsDone(true)
+        setIsResearching(false)
+        if (msg.sources?.length > 0) {
+          setSources(prev => {
+            const existing = new Set(prev.map(s => s.url))
+            return [...prev, ...msg.sources.filter(s => !existing.has(s.url))]
+          })
+        }
+        setSearches([])
+        setChatMessages(prev => {
+          const updated = [...prev];
+          const lastIdx = updated.length - 1;
+          if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
+            updated[lastIdx] = {
+              ...updated[lastIdx],
+              content: msg.answer || updated[lastIdx].content,
+              isThinking: false
+            };
+          }
+          return updated;
+        });
+        setRefreshHistoryKey(k => k + 1)
+        break
+
+      case 'error':
+        setError(msg.message || 'An unexpected error occurred')
+        setIsThinking(false)
+        setIsResearching(false)
+        setSearches([])
+        setChatMessages(prev => {
+          const updated = [...prev];
+          const lastIdx = updated.length - 1;
+          if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
+            updated[lastIdx] = {
+              ...updated[lastIdx],
+              content: msg.message || 'An unexpected error occurred',
+              isThinking: false
+            };
+          }
+          return updated;
+        });
+        break
+
+      default:
+        break
+    }
+  }, [])
+
   const handleSearch = useCallback(async (goal) => {
     if (!goal.trim()) return
 
-    setCurrentQuery(goal)
-    setAnswer('')
-    setSources([])
-    setSearches([])
+    const isFollowUp = !!activeSessionId;
+
     setIsThinking(true)
     setIsDone(false)
     setError(null)
     setHitlQuestion(null)
     setIsResearching(true)
+    setSources([])
+    setSearches([])
+
+    // Update chat messages in UI
+    const newUserMessage = { role: 'user', content: goal };
+    const newAssistantMessage = { role: 'assistant', content: '', isThinking: true };
+
+    if (isFollowUp) {
+      setChatMessages(prev => [...prev, newUserMessage, newAssistantMessage]);
+    } else {
+      setChatMessages([newUserMessage, newAssistantMessage]);
+    }
 
     try {
       const headers = auth.authHeaders({ 'Content-Type': 'application/json' })
       const response = await fetch(`${API_BASE}/research`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ goal }),
+        body: JSON.stringify({ 
+          goal,
+          session_id: activeSessionId
+        }),
       })
 
       if (!response.ok) {
@@ -160,8 +303,15 @@ export default function App() {
 
       const data = await response.json()
       const sessionId = data.session_id
-      setActiveSessionId(sessionId)
+      
+      if (!isFollowUp) {
+        setActiveSessionId(sessionId)
+      }
       setRefreshHistoryKey(k => k + 1)
+
+      if (wsRef.current) {
+        wsRef.current.close()
+      }
 
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       const wsHost = window.location.host
@@ -196,54 +346,7 @@ export default function App() {
       setIsResearching(false)
       setIsThinking(false)
     }
-  }, [auth])
-
-  const handleWebSocketEvent = useCallback((msg) => {
-    switch (msg.type) {
-      case 'searching':
-        setIsThinking(true)
-        setSearches(prev => [...prev, msg.query])
-        break
-      case 'source_found':
-        if (msg.source) {
-          setSources(prev => [...prev, msg.source])
-          setSearches(prev => { const u = [...prev]; if (u.length > 0) u.shift(); return u })
-        }
-        break
-      case 'reasoning':
-        setIsThinking(true)
-        if (msg.content) setAnswer(msg.content)
-        if (msg.is_final) setSearches([])
-        break
-      case 'pause':
-        setHitlQuestion(msg.question)
-        setIsThinking(false)
-        break
-      case 'done':
-        if (msg.answer) setAnswer(msg.answer)
-        if (msg.sources?.length > 0) {
-          setSources(prev => {
-            const existing = new Set(prev.map(s => s.url))
-            return [...prev, ...msg.sources.filter(s => !existing.has(s.url))]
-          })
-        }
-        setIsThinking(false)
-        setIsDone(true)
-        setIsResearching(false)
-        setSearches([])
-        // Refresh sidebar history
-        setRefreshHistoryKey(k => k + 1)
-        break
-      case 'error':
-        setError(msg.message || 'An unexpected error occurred')
-        setIsThinking(false)
-        setIsResearching(false)
-        setSearches([])
-        break
-      default:
-        break
-    }
-  }, [])
+  }, [auth, activeSessionId, handleWebSocketEvent])
 
   const handleHITLResume = useCallback((userAnswer) => {
     setHitlQuestion(null)
@@ -254,8 +357,7 @@ export default function App() {
   }, [])
 
   const handleNewSearch = () => {
-    setCurrentQuery('')
-    setAnswer('')
+    setChatMessages([])
     setSources([])
     setSearches([])
     setIsThinking(false)
@@ -281,10 +383,19 @@ export default function App() {
       const res = await auth.authFetch(`/sessions/${sessionId}`)
       if (res.ok) {
         const data = await res.json()
-        setCurrentQuery(data.goal || '')
-        setAnswer(data.answer || '')
+        setChatMessages([])
         setSources(data.sources || [])
         setSearches([])
+
+        if (data.messages && data.messages.length > 0) {
+          const filtered = data.messages.filter(m => m.role !== 'system')
+          setChatMessages(filtered)
+        } else {
+          setChatMessages([
+            { role: 'user', content: data.goal || '' },
+            { role: 'assistant', content: data.answer || '' }
+          ])
+        }
       } else {
         setError('Failed to load session details')
       }
@@ -322,7 +433,7 @@ export default function App() {
     )
   }
 
-  const isLanding = !isResearching && !isDone && !answer
+  const isLanding = chatMessages.length === 0
   const suggestions = category ? CATEGORY_SUGGESTIONS[category] : null
 
   return (
@@ -398,17 +509,10 @@ export default function App() {
 
                   {/* Composer / Search Bar */}
                   <ChatComposer
-                    onSubmit={() => {}}
+                    onSubmit={(value) => handleSearch(value)}
                     placeholder="Ask autonomous agents to gather web intelligence..."
                     input={
                       <ChatComposerInput
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault()
-                            const text = e.currentTarget.textContent || ''
-                            handleSearch(text)
-                          }
-                        }}
                         style={{ minHeight: 80 }}
                       />
                     }
@@ -465,41 +569,30 @@ export default function App() {
               <VStack style={{ flex: 1, minWidth: 0, height: '100%', borderRight: '1px solid var(--color-border)' }}>
                 <div style={{ flex: 1, overflowY: 'auto', padding: 'var(--spacing-6)' }}>
                   <ChatMessageList>
-                    {/* User message */}
-                    {currentQuery && (
-                      <ChatMessage sender="user">
-                        <ChatMessageBubble>
-                          <Text type="body">{currentQuery}</Text>
+                    {chatMessages.map((msg, index) => (
+                      <ChatMessage 
+                        key={index} 
+                        sender={msg.role === 'user' ? 'user' : 'assistant'} 
+                        avatar={msg.role === 'assistant' ? <Avatar name="Agent" size="small" /> : null}
+                      >
+                        <ChatMessageBubble variant={msg.role === 'assistant' ? 'ghost' : 'default'} style={{ maxWidth: '100%' }}>
+                          <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.6' }} className="font-body text-sm text-slate-200">
+                            {formatMessageContent(msg.content)}
+                          </div>
                         </ChatMessageBubble>
                       </ChatMessage>
-                    )}
-
-                    {/* Agent status/message */}
-                    <ChatMessage sender="assistant" avatar={<Avatar name="Agent" size="small" />}>
-                      <ChatMessageBubble variant="ghost">
-                        <Text type="body">
-                          {isDone ? 'Research completed. You can view findings in the artifact panel.' : 'Autonomous research agents actively crawling, analyzing, and synthesizing findings...'}
-                        </Text>
-                      </ChatMessageBubble>
-                    </ChatMessage>
+                    ))}
                   </ChatMessageList>
                 </div>
 
                 {/* Follow up Composer */}
-                <div style={{ padding: 'var(--spacing-4)', borderTop: '1px solid var(--color-border)', backgroundColor: 'var(--color-background-surface)' }}>
+                <div style={{ padding: 'var(--spacing-6)', borderTop: '1px solid var(--color-border)', backgroundColor: 'var(--color-background-surface)' }}>
                   <ChatComposer
-                    onSubmit={() => {}}
+                    onSubmit={(value) => handleSearch(value)}
                     placeholder="Ask a follow-up or refine the research..."
+                    isDisabled={isResearching}
                     input={
-                      <ChatComposerInput
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault()
-                            const text = e.currentTarget.textContent || ''
-                            handleSearch(text)
-                          }
-                        }}
-                      />
+                      <ChatComposerInput />
                     }
                   />
                 </div>
@@ -512,29 +605,44 @@ export default function App() {
                 isReversed
                 pillPlacement="start"
                 hasDivider
-                label="Resize results panel"
+                label="Resize sources panel"
               />
 
-              {/* Right Column: Resizable Artifact Panel (AnswerPanel) */}
+              {/* Right Column: Resizable Side Panel for Sources */}
               <Card
                 variant="transparent"
                 height="100%"
                 style={{
                   width: artifactResize.size,
                   flexShrink: 0,
-                  overflow: 'hidden',
+                  overflowY: 'auto',
                   padding: 'var(--spacing-6)',
                   backgroundColor: 'var(--color-background-surface)'
                 }}
               >
-                <AnswerPanel
-                  answer={answer}
-                  sources={sources}
-                  searches={searches}
-                  isThinking={isThinking}
-                  isDone={isDone}
-                  error={error}
-                />
+                <VStack gap={4} width="100%">
+                  <Heading level={4} style={{ margin: 0 }}>
+                    Sources Found ({sources.length})
+                  </Heading>
+                  {isThinking && searches.length > 0 && (
+                    <div className="flex items-center gap-2 text-indigo-400 text-xs animate-pulse">
+                      <span className="animate-spin material-symbols-outlined text-[16px]">sync</span>
+                      <span>Searching: {searches.join(', ')}...</span>
+                    </div>
+                  )}
+                  {sources.length === 0 ? (
+                    <div style={{ padding: 'var(--spacing-8)', textAlign: 'center', color: 'var(--color-text-secondary)', marginTop: '20vh' }}>
+                      <span className="material-symbols-outlined text-4xl opacity-30 mb-2">database</span>
+                      <p className="text-xs text-slate-500">No sources crawled yet.</p>
+                    </div>
+                  ) : (
+                    <VStack gap={3} width="100%">
+                      {sources.map((src, sIdx) => (
+                        <SourceCard key={sIdx} source={src} index={sIdx + 1} />
+                      ))}
+                    </VStack>
+                  )}
+                </VStack>
               </Card>
             </div>
           )}
@@ -548,4 +656,3 @@ export default function App() {
     </Theme>
   )
 }
-

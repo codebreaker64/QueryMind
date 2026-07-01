@@ -113,14 +113,6 @@ export default function HistorySidebar({
           <span className="material-symbols-outlined">dynamic_feed</span>
           <span className="font-body text-sm font-medium">Research Feed</span>
         </a>
-        <a className="text-slate-500 flex items-center gap-3 px-4 py-3 hover:bg-white/5 hover:text-white transition-all hover:translate-x-1 duration-200 rounded-lg cursor-pointer" href="#">
-          <span className="material-symbols-outlined text-[20px]">database</span>
-          <span className="font-body text-sm font-medium">Knowledge Base</span>
-        </a>
-        <a className="text-slate-500 flex items-center gap-3 px-4 py-3 hover:bg-white/5 hover:text-white transition-all hover:translate-x-1 duration-200 rounded-lg cursor-pointer" href="#">
-          <span className="material-symbols-outlined text-[20px]">history</span>
-          <span className="font-body text-sm font-medium">Session History</span>
-        </a>
       </nav>
 
       {/* Search filter for history */}

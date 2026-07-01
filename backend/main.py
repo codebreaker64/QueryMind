@@ -119,6 +119,7 @@ app.add_middleware(
 
 class ResearchRequest(BaseModel):
     goal: str
+    session_id: str | None = None
     attachment_ids: list[str] | None = None
 
 
@@ -280,7 +281,7 @@ async def start_research(
     Start a new research session.
     Returns a session_id that the client uses to connect via WebSocket.
     """
-    session_id = str(uuid.uuid4())
+    session_id = request.session_id or str(uuid.uuid4())
     user_id = user["id"] if user else "anonymous"
 
     # Resolve attachments from uploaded file IDs

@@ -8,20 +8,30 @@ Streams intermediate events to the frontend via WebSocket.
 
 import asyncio
 import json
+import logging
 import os
+import traceback
 
 from openai import AsyncOpenAI
+
+logger = logging.getLogger(__name__)
 
 from mcp_server import get_openai_tools, execute_tool
 from state import StateManager
 from tools.hitl import register_session, unregister_session
 
 
-# GPT-5.5 model string
-MODEL = "gpt-5.5"
+# Model string — defaults to gemma-4-31b-it for Gemini compatibility
+MODEL = os.environ.get("MODEL_NAME", "gemma-4-31b-it")
 
-# Maximum number of agentic loop iterations to prevent runaway
-MAX_STEPS = 20
+# Maximum number of agentic loop iterations to prevent runaway (defaults to 15)
+MAX_STEPS = int(os.environ.get("MAX_STEPS", "15"))
+
+# Maximum total execution time in seconds for the agentic loop (defaults to 90 seconds)
+MAX_TIME_LIMIT = float(os.environ.get("MAX_TIME_LIMIT", "300.0"))
+
+# Delay in seconds between agent steps to prevent hitting rate limits (defaults to 2.0 seconds)
+STEP_DELAY = float(os.environ.get("STEP_DELAY", "2.0"))
 
 SYSTEM_PROMPT = """\
 You are QueryMind, an expert AI research agent. Your job is to thoroughly \
@@ -42,6 +52,7 @@ Guidelines:
 3. After initial searches, analyze the results and run additional targeted searches \
    if needed to fill gaps.
 4. When you have enough information, produce a final answer that is:
+   - Written in natural, warm, and human-friendly conversational language (avoid dry, robotic, or overly technical jargon; explain concepts clearly as if speaking to a colleague)
    - Well-structured with clear sections and headings (use Markdown)
    - Comprehensive but concise
    - Includes specific facts, numbers, and details from your sources
@@ -71,7 +82,19 @@ async def run_agent(
         user_id: Owner's user ID for session scoping.
         attachments: Optional list of dicts with 'filename' and 'content' keys.
     """
-    client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+    # Resolve the API key
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    
+    # Use Gemini's OpenAI-compatible base URL if no custom base URL is specified
+    base_url = os.environ.get("OPENAI_BASE_URL")
+    if not base_url:
+        base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+    client = AsyncOpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        max_retries=5,
+    )
     state_manager = StateManager()
     tools = get_openai_tools()
 
@@ -81,18 +104,40 @@ async def run_agent(
     # Build user message with optional attachments
     user_content = _build_user_message(goal, attachments)
 
-    # Initialize message history
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_content},
-    ]
+    # Try to load existing session from cache
+    existing_session = None
+    if redis_store:
+        existing_session = await redis_store.get_session(user_id, session_id)
 
-    search_history: list[str] = []
-    sources_found: list[dict] = []
+    # Initialize or load message history, search history and sources
+    if existing_session and "messages" in existing_session:
+        messages = existing_session["messages"]
+        messages.append({"role": "user", "content": user_content})
+    else:
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
+        ]
+
+    search_history: list[str] = existing_session.get("searches", []) if existing_session else []
+    sources_found: list[dict] = existing_session.get("sources", []) if existing_session else []
     step_count = 0
+    start_time = asyncio.get_event_loop().time()
+    completed_normally = False
+    reached_limit = None
 
     try:
         while step_count < MAX_STEPS:
+            # Check elapsed time
+            elapsed_time = asyncio.get_event_loop().time() - start_time
+            if elapsed_time >= MAX_TIME_LIMIT:
+                reached_limit = "time"
+                break
+
+            # Rate limit / step delay to prevent hitting API quotas
+            if step_count > 0 and STEP_DELAY > 0:
+                await asyncio.sleep(STEP_DELAY)
+
             step_count += 1
 
             # Send "reasoning" status
@@ -113,8 +158,8 @@ async def run_agent(
             choice = response.choices[0]
             message = choice.message
 
-            # Append assistant message to history
-            messages.append(message.model_dump())
+            # Append assistant message to history (sanitized for Gemini compatibility)
+            messages.append(_sanitize_assistant_message(message))
 
             # If there are tool calls, execute them
             if message.tool_calls:
@@ -220,18 +265,21 @@ async def run_agent(
                         "answer": final_answer,
                         "sources": sources_found,
                         "searches": search_history,
+                        "messages": messages,
                         "attachments": [
                             {"filename": a["filename"]}
                             for a in (attachments or [])
                         ],
                     })
 
+                completed_normally = True
                 break
 
-        else:
-            # Max steps reached
+        if not completed_normally:
+            # Max steps or time limit reached
+            reason = "time limit" if reached_limit == "time" else "maximum number of research steps"
             partial_answer = (
-                "I've reached the maximum number of research steps. "
+                f"I've reached the {reason}. "
                 "Here's what I found so far based on my research."
             )
             await ws_manager.send_event(session_id, {
@@ -247,9 +295,12 @@ async def run_agent(
                     "answer": partial_answer,
                     "sources": sources_found,
                     "searches": search_history,
+                    "messages": messages,
                 })
 
     except Exception as e:
+        logger.error("Agent error for session %s: %s", session_id, e)
+        traceback.print_exc()
         await ws_manager.send_event(session_id, {
             "type": "error",
             "message": str(e),
@@ -358,3 +409,30 @@ def _parse_sources(result_text: str) -> list[dict]:
         })
 
     return sources
+
+
+def _sanitize_assistant_message(message) -> dict:
+    """Sanitize assistant message to only keep role, content, and valid tool calls."""
+    role = getattr(message, "role", "assistant")
+    content = getattr(message, "content", "") or ""
+    tool_calls = getattr(message, "tool_calls", None)
+
+    clean = {
+        "role": role,
+        "content": content,
+    }
+
+    if tool_calls:
+        clean_calls = []
+        for tc in tool_calls:
+            clean_calls.append({
+                "id": getattr(tc, "id", None),
+                "type": getattr(tc, "type", "function"),
+                "function": {
+                    "name": getattr(tc.function, "name", None),
+                    "arguments": getattr(tc.function, "arguments", None),
+                }
+            })
+        clean["tool_calls"] = clean_calls
+
+    return clean

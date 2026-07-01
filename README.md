@@ -15,8 +15,8 @@ https://github.com/user-attachments/assets/c80ddf09-8af8-4381-914c-cc3bfa2e2a70
 ## Architecture
 
 ```
-┌──────────────┐    WebSocket     ┌──────────────┐    OpenAI API    ┌──────────┐
-│   React UI   │ ◄──────────────► │   FastAPI     │ ◄─────────────► │  GPT-5.5 │
+┌──────────────┐    WebSocket     ┌──────────────┐    Gemini API    ┌──────────┐
+│   React UI   │ ◄──────────────► │   FastAPI     │ ◄─────────────► │  Gemma 4 │
 │  (Vite)      │                  │   Backend     │                  └──────────┘
 └──────────────┘                  │               │    Tavily API   ┌──────────┐
                                   │   Agent Loop  │ ◄─────────────► │  Tavily  │
@@ -39,7 +39,7 @@ https://github.com/user-attachments/assets/c80ddf09-8af8-4381-914c-cc3bfa2e2a70
 |----------|----------------------------------|
 | Frontend | React + Tailwind CSS v4 (Vite)   |
 | Backend  | Python + FastAPI                 |
-| LLM      | GPT-5.5 (OpenAI Chat API)       |
+| LLM      | Gemma 4 (Gemini API)             |
 | Search   | Tavily Python SDK                |
 | Protocol | MCP Python SDK                   |
 | Async    | asyncio + Semaphore              |
@@ -51,7 +51,7 @@ https://github.com/user-attachments/assets/c80ddf09-8af8-4381-914c-cc3bfa2e2a70
 ### Prerequisites
 - **Python 3.11+**
 - **Node.js 18+**
-- **OpenAI API key** (with GPT-5.5 access)
+- **Gemini API key**
 - **Tavily API key** ([get one free](https://tavily.com))
 
 ### 1. Clone & configure environment
@@ -61,7 +61,7 @@ https://github.com/user-attachments/assets/c80ddf09-8af8-4381-914c-cc3bfa2e2a70
 cp .env.example .env
 
 # Edit .env and add your API keys
-# OPENAI_API_KEY=sk-...
+# GEMINI_API_KEY=AQ...
 # TAVILY_API_KEY=tvly-...
 ```
 
@@ -113,7 +113,7 @@ The frontend will be available at `http://localhost:5173` and will proxy API req
 querymind/
 ├── backend/
 │   ├── main.py              # FastAPI app + WebSocket streaming
-│   ├── agent.py             # Agentic loop (GPT-5.5 + tool calls)
+│   ├── agent.py             # Agentic loop (Gemma 4 + tool calls)
 │   ├── mcp_server.py        # MCP tool registration + dispatch
 │   ├── state.py             # JSON state serialization
 │   └── tools/

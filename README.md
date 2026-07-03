@@ -2,7 +2,9 @@
 
 **AI-powered research agent with human-in-the-loop** — A Perplexity-style web application that searches the web, asks clarifying questions, and delivers comprehensive answers with cited sources.
 
-![QueryMind](https://img.shields.io/badge/QueryMind-AI%20Research%20Agent-6366f1?style=for-the-badge)
+
+
+https://github.com/user-attachments/assets/fae4a0a7-3788-4d66-ac3b-08245a44eb26
 
 
 

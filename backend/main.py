@@ -18,14 +18,13 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import (
     FastAPI,
-    WebSocket,
-    WebSocketDisconnect,
     UploadFile,
     File,
     Form,
     Depends,
     HTTPException,
 )
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -52,35 +51,40 @@ UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
-# ── WebSocket Connection Manager ────────────────────────────────────
+# ── SSE Connection Manager ──────────────────────────────────────────
 
-class ConnectionManager:
-    """Manages active WebSocket connections per session."""
+class SessionStreamManager:
+    """Manages active Event Queues per session for SSE streaming."""
 
     def __init__(self):
-        self._connections: dict[str, WebSocket] = {}
+        self._queues: dict[str, asyncio.Queue] = {}
 
-    async def connect(self, session_id: str, websocket: WebSocket):
-        await websocket.accept()
-        self._connections[session_id] = websocket
-
-    def disconnect(self, session_id: str):
-        self._connections.pop(session_id, None)
+    def get_queue(self, session_id: str) -> asyncio.Queue:
+        if session_id not in self._queues:
+            self._queues[session_id] = asyncio.Queue()
+        return self._queues[session_id]
 
     async def send_event(self, session_id: str, event: dict):
-        """Send a JSON event to the client for a given session."""
-        ws = self._connections.get(session_id)
-        if ws:
-            try:
-                await ws.send_json(event)
-            except Exception:
-                self.disconnect(session_id)
+        """Put a JSON event into the session's stream queue."""
+        if session_id in self._queues:
+            await self._queues[session_id].put(event)
+
+    def close_stream(self, session_id: str):
+        """Signal the end of the event stream for the session."""
+        if session_id in self._queues:
+            # Enqueue None as a sentinel to signal end of stream
+            asyncio.create_task(self._queues[session_id].put(None))
+
+    def remove_session(self, session_id: str):
+        """Clean up session queues."""
+        self._queues.pop(session_id, None)
 
     def is_connected(self, session_id: str) -> bool:
-        return session_id in self._connections
+        """Returns True if the queue exists (and SSE client is listening)."""
+        return session_id in self._queues
 
 
-manager = ConnectionManager()
+manager = SessionStreamManager()
 redis_store = RedisStore()
 
 
@@ -272,14 +276,14 @@ async def delete_session(
 
 # ── REST Endpoints ──────────────────────────────────────────────────
 
-@app.post("/research", response_model=ResearchResponse)
+@app.post("/research")
 async def start_research(
     request: ResearchRequest,
     user: dict | None = Depends(get_current_user),
 ):
     """
     Start a new research session.
-    Returns a session_id that the client uses to connect via WebSocket.
+    Returns a Server-Sent Events (SSE) stream representing the agent's progress.
     """
     session_id = request.session_id or str(uuid.uuid4())
     user_id = user["id"] if user else "anonymous"
@@ -292,19 +296,40 @@ async def start_research(
             if att:
                 attachments.append(att)
 
-    # Start the agent in a background task
+    # Initialize the queue for this session ID
+    queue = manager.get_queue(session_id)
+
+    # Start the agent task in the background
     asyncio.create_task(
-        _run_agent_with_delay(
+        run_agent(
             request.goal,
             session_id,
+            manager,
+            redis_store=redis_store,
             user_id=user_id,
             attachments=attachments if attachments else None,
         )
     )
 
-    return ResearchResponse(
-        session_id=session_id,
-        status="started",
+    async def event_generator():
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                
+                event_type = event.get("type", "message")
+                yield f"event: {event_type}\ndata: {json.dumps(event)}\n\n"
+        finally:
+            manager.remove_session(session_id)
+
+    return StreamingResponse(
+        event_generator(),
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Content-Type": "text/event-stream",
+        }
     )
 
 
@@ -321,73 +346,17 @@ def _find_attachment(file_id: str) -> dict | None:
     return None
 
 
-async def _run_agent_with_delay(
-    goal: str,
-    session_id: str,
-    user_id: str = "anonymous",
-    attachments: list[dict] | None = None,
-):
-    """Wait briefly for the WebSocket to connect, then run the agent."""
-    # Give the frontend a moment to establish the WebSocket connection
-    for _ in range(50):  # Wait up to 5 seconds
-        if manager.is_connected(session_id):
-            break
-        await asyncio.sleep(0.1)
-
-    if not manager.is_connected(session_id):
-        return  # Client never connected
-
-    await run_agent(
-        goal,
-        session_id,
-        manager,
-        redis_store=redis_store,
-        user_id=user_id,
-        attachments=attachments,
-    )
+class ResumeRequest(BaseModel):
+    answer: str
 
 
-# ── WebSocket Endpoint ─────────────────────────────────────────────
-
-@app.websocket("/ws/{session_id}")
-async def websocket_endpoint(websocket: WebSocket, session_id: str):
+@app.post("/sessions/{session_id}/resume")
+async def resume_session(session_id: str, request: ResumeRequest):
     """
-    Bidirectional WebSocket for a research session.
-
-    Server → Client events:
-        - searching: agent called web_search
-        - source_found: a search result came back
-        - reasoning: agent is processing / streaming answer
-        - pause: agent called ask_user (HITL)
-        - done: final answer ready
-        - error: something went wrong
-
-    Client → Server events:
-        - resume: user answered HITL question { type: "resume", answer: "..." }
+    Resume the agentic loop with the user's answer to a clarification question.
     """
-    await manager.connect(session_id, websocket)
-
-    try:
-        while True:
-            # Listen for messages from the client
-            data = await websocket.receive_text()
-
-            try:
-                message = json.loads(data)
-            except json.JSONDecodeError:
-                continue
-
-            msg_type = message.get("type", "")
-
-            if msg_type == "resume":
-                # User answered a HITL question
-                answer = message.get("answer", "")
-                submit_answer(session_id, answer)
-
-    except WebSocketDisconnect:
-        manager.disconnect(session_id)
-    except Exception:
-        manager.disconnect(session_id)
+    submit_answer(session_id, request.answer)
+    return {"status": "resumed"}
 
 
 # ── Health Check ────────────────────────────────────────────────────

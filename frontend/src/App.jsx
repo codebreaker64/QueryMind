@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react'
+import ReactMarkdown from 'react-markdown'
 import './index.css'
 import { Theme } from '@astryxdesign/core'
 import { stoneTheme } from '@astryxdesign/theme-stone/built'
@@ -136,10 +137,10 @@ export default function App() {
     autoSaveId: 'querymind-sources-panel',
   })
 
-  // WebSocket ref
-  const wsRef = useRef(null)
+  // AbortController ref for streaming
+  const abortControllerRef = useRef(null)
 
-  const handleWebSocketEvent = useCallback((msg) => {
+  const handleStreamEvent = useCallback((msg) => {
     switch (msg.type) {
       case 'searching':
         setIsThinking(true)
@@ -286,75 +287,111 @@ export default function App() {
       setChatMessages([newUserMessage, newAssistantMessage]);
     }
 
+    const generateUUID = () => {
+      try {
+        return crypto.randomUUID()
+      } catch (e) {
+        return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
+      }
+    }
+    const sessionId = activeSessionId || generateUUID()
+
     try {
+      if (!isFollowUp) {
+        setActiveSessionId(sessionId)
+      }
+      setRefreshHistoryKey(k => k + 1)
+
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
+
+      const controller = new AbortController()
+      abortControllerRef.current = controller
+
       const headers = auth.authHeaders({ 'Content-Type': 'application/json' })
       const response = await fetch(`${API_BASE}/research`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ 
           goal,
-          session_id: activeSessionId
+          session_id: sessionId
         }),
+        signal: controller.signal
       })
 
       if (!response.ok) {
         throw new Error(`Server error: ${response.status}`)
       }
 
-      const data = await response.json()
-      const sessionId = data.session_id
-      
-      if (!isFollowUp) {
-        setActiveSessionId(sessionId)
-      }
-      setRefreshHistoryKey(k => k + 1)
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
 
-      if (wsRef.current) {
-        wsRef.current.close()
-      }
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
 
-      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      const wsHost = window.location.host
-      const ws = new WebSocket(`${wsProtocol}//${wsHost}/ws/${sessionId}`)
-      wsRef.current = ws
+        buffer += decoder.decode(value, { stream: true })
+        const parts = buffer.split('\n\n')
+        buffer = parts.pop() || ''
 
-      ws.onopen = () => {
-        console.log('[QueryMind] WebSocket connected:', sessionId)
-      }
+        for (const part of parts) {
+          if (!part.trim()) continue
 
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data)
-          handleWebSocketEvent(msg)
-        } catch (e) {
-          console.error('[QueryMind] Failed to parse WS message:', e)
+          const lines = part.split('\n')
+          let eventType = ''
+          let eventDataStr = ''
+
+          for (const line of lines) {
+            if (line.startsWith('event:')) {
+              eventType = line.slice(6).trim()
+            } else if (line.startsWith('data:')) {
+              eventDataStr = line.slice(5).trim()
+            }
+          }
+
+          if (eventType && eventDataStr) {
+            try {
+              const msg = JSON.parse(eventDataStr)
+              handleStreamEvent({ type: eventType, ...msg })
+            } catch (e) {
+              console.error('[QueryMind] Failed to parse message:', e, eventDataStr)
+            }
+          }
         }
       }
 
-      ws.onerror = () => {
-        setError('Connection error. Please try again.')
-        setIsResearching(false)
-        setIsThinking(false)
-      }
-
-      ws.onclose = () => {
-        wsRef.current = null
-      }
-
     } catch (err) {
+      if (err.name === 'AbortError') {
+        console.log('[QueryMind] Stream aborted')
+        return
+      }
       setError(err.message || 'Failed to start research')
       setIsResearching(false)
       setIsThinking(false)
     }
-  }, [auth, activeSessionId, handleWebSocketEvent])
+  }, [auth, activeSessionId, handleStreamEvent])
 
-  const handleHITLResume = useCallback((userAnswer) => {
+  const handleHITLResume = useCallback(async (userAnswer) => {
     setHitlQuestion(null)
     setIsThinking(true)
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'resume', answer: userAnswer }))
+    try {
+      const headers = auth.authHeaders({ 'Content-Type': 'application/json' })
+      const res = await fetch(`${API_BASE}/sessions/${activeSessionId}/resume`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ answer: userAnswer }),
+      })
+      if (!res.ok) {
+        throw new Error(`Server returned ${res.status}`)
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to resume session')
+      setIsThinking(false)
+      setIsResearching(false)
     }
-  }, [])
+  }, [auth, activeSessionId])
 
   const handleNewSearch = () => {
     setChatMessages([])
@@ -365,9 +402,9 @@ export default function App() {
     setError(null)
     setIsResearching(false)
     setActiveSessionId(null)
-    if (wsRef.current) {
-      wsRef.current.close()
-      wsRef.current = null
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
     }
   }
 
@@ -569,19 +606,39 @@ export default function App() {
               <VStack style={{ flex: 1, minWidth: 0, height: '100%', borderRight: '1px solid var(--color-border)' }}>
                 <div style={{ flex: 1, overflowY: 'auto', padding: 'var(--spacing-6)' }}>
                   <ChatMessageList>
-                    {chatMessages.map((msg, index) => (
-                      <ChatMessage 
-                        key={index} 
-                        sender={msg.role === 'user' ? 'user' : 'assistant'} 
-                        avatar={msg.role === 'assistant' ? <Avatar name="Agent" size="small" /> : null}
-                      >
-                        <ChatMessageBubble variant={msg.role === 'assistant' ? 'ghost' : 'default'} style={{ maxWidth: '100%' }}>
-                          <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.6' }} className="font-body text-sm text-slate-200">
-                            {formatMessageContent(msg.content)}
-                          </div>
-                        </ChatMessageBubble>
-                      </ChatMessage>
-                    ))}
+                    {chatMessages.map((msg, index) => {
+                      const formattedContent = formatMessageContent(msg.content);
+                      const isThinkingEmpty = msg.role === 'assistant' && msg.isThinking && !formattedContent;
+                      
+                      return (
+                        <ChatMessage 
+                          key={index} 
+                          sender={msg.role === 'user' ? 'user' : 'assistant'} 
+                          avatar={msg.role === 'assistant' ? <Avatar name="Agent" size="small" /> : null}
+                        >
+                          <ChatMessageBubble variant={msg.role === 'assistant' ? 'ghost' : 'default'} style={{ maxWidth: '100%' }}>
+                            <div className="font-body text-sm text-slate-200" style={{ lineHeight: '1.6' }}>
+                              {isThinkingEmpty ? (
+                                <div className="flex items-center gap-2 py-1">
+                                  <span className="text-xs text-slate-400 font-sans animate-pulse">Thinking</span>
+                                  <div className="thinking-dots flex items-center">
+                                    <span></span>
+                                    <span></span>
+                                    <span></span>
+                                  </div>
+                                </div>
+                              ) : msg.role === 'assistant' ? (
+                                <div className="markdown-content">
+                                  <ReactMarkdown>{formattedContent}</ReactMarkdown>
+                                </div>
+                              ) : (
+                                <div style={{ whiteSpace: 'pre-wrap' }}>{formattedContent}</div>
+                              )}
+                            </div>
+                          </ChatMessageBubble>
+                        </ChatMessage>
+                      );
+                    })}
                   </ChatMessageList>
                 </div>
 

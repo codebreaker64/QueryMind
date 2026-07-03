@@ -15,19 +15,19 @@ https://github.com/user-attachments/assets/c80ddf09-8af8-4381-914c-cc3bfa2e2a70
 ## Architecture
 
 ```
-┌──────────────┐    WebSocket     ┌──────────────┐    Gemini API    ┌──────────┐
-│   React UI   │ ◄──────────────► │   FastAPI     │ ◄─────────────► │  Gemma 4 │
-│  (Vite)      │                  │   Backend     │                  └──────────┘
-└──────────────┘                  │               │    Tavily API   ┌──────────┐
-                                  │   Agent Loop  │ ◄─────────────► │  Tavily  │
-                                  │   MCP Server  │                  │  Search  │
-                                  └──────────────┘                  └──────────┘
+┌──────────────┐  SSE (Streaming)  ┌──────────────┐    Gemini API    ┌──────────┐
+│   React UI   │ ◄───────────────  │   FastAPI     │ ◄─────────────► │  Gemma 4 │
+│  (Vite)      │  ──────────────►  │   Backend     │                  └──────────┘
+└──────────────┘    REST (Post)    │               │    Tavily API   ┌──────────┐
+                                   │   Agent Loop  │ ◄─────────────► │  Tavily  │
+                                   │   MCP Server  │                  │  Search  │
+                                   └──────────────┘                  └──────────┘
 ```
 
 ### Key Features
 - **Parallel Web Search** — Runs multiple Tavily searches concurrently with rate limiting
 - **Human-in-the-Loop** — Agent pauses mid-workflow to ask clarifying questions
-- **Streaming Answers** — Progressive display of reasoning and sources via WebSocket
+- **Streaming Answers** — Progressive display of reasoning and sources via Server-Sent Events (SSE)
 - **Cited Sources** — Every claim is backed by numbered citations with source cards
 - **State Persistence** — Agent state serialized to JSON for seamless pause/resume
 
@@ -38,7 +38,7 @@ https://github.com/user-attachments/assets/c80ddf09-8af8-4381-914c-cc3bfa2e2a70
 | Layer    | Technology                       |
 |----------|----------------------------------|
 | Frontend | React + Tailwind CSS v4 (Vite)   |
-| Backend  | Python + FastAPI                 |
+| Backend  | Python + FastAPI (SSE)           |
 | LLM      | Gemma 4 (Gemini API)             |
 | Search   | Tavily Python SDK                |
 | Protocol | MCP Python SDK                   |
@@ -112,7 +112,7 @@ The frontend will be available at `http://localhost:5173` and will proxy API req
 ```
 querymind/
 ├── backend/
-│   ├── main.py              # FastAPI app + WebSocket streaming
+│   ├── main.py              # FastAPI app + SSE streaming
 │   ├── agent.py             # Agentic loop (Gemma 4 + tool calls)
 │   ├── mcp_server.py        # MCP tool registration + dispatch
 │   ├── state.py             # JSON state serialization
@@ -121,7 +121,7 @@ querymind/
 │       └── hitl.py          # Human-in-the-loop pause/resume
 ├── frontend/
 │   ├── src/
-│   │   ├── App.jsx          # Main layout + WebSocket management
+│   │   ├── App.jsx          # Main layout + SSE connection & streaming
 │   │   ├── SearchBar.jsx    # Perplexity-style query input
 │   │   ├── AnswerPanel.jsx  # Streaming answer + source display
 │   │   ├── HITLModal.jsx    # Clarification modal
@@ -131,6 +131,35 @@ querymind/
 ├── .env.example
 └── README.md
 ```
+
+---
+
+## Project Documentation & Reflection
+
+### What was built and the problem I was trying to solve
+QueryMind is an autonomous, AI-driven research assistant designed to solve "twenty-tab search fatigue." When users research complex or niche topics, they typically spend hours sorting through search engine results, parsing long articles, and manually verifying references. 
+
+QueryMind automates this entire process:
+- It processes user goals, searches the web concurrently using Tavily (with custom async rate-limiting), crawls and extracts text, and streams clean synthesis reports via Server-Sent Events (SSE).
+- It features a **Human-in-the-Loop (HITL)** system that automatically pauses execution and prompts the user for direction when facing ambiguous queries, resuming cleanly by serializing the agent's memory.
+
+### Approach & Thinking (Decisions, Tradeoffs, Iterations)
+- **Tech Stack Choices**: I selected FastAPI for the backend to leverage Python's rich asyncio ecosystem and support seamless streaming. For the UI, I used Vite + React with custom layout and theme components from the `@astryxdesign` stone theme to produce a premium aesthetic.
+- **WebSocket to Server-Sent Events (SSE) Migration**: 
+  - *Initial Approach*: The project was originally planned around a bidirectional WebSocket interface. 
+  - *The Pivot to SSE*: I transitioned the streaming protocol to HTTP-based Server-Sent Events (SSE) because QueryMind's streaming is predominantly unidirectional (agent sending reasoning, sources, and clarification prompts to the client). 
+  - *Trade-offs & Benefits*: SSE is simpler to secure (supporting standard HTTP headers for token-based authentication out of the box), automatically handles client-side reconnections, and bypasses proxy/firewall traversal issues common with WebSockets. Client responses (like HITL answers) are handled cleanly via REST POST endpoints, making the API surface more modular.
+- **Architectural Trade-offs**: 
+  - *Rate-Limiting vs Speed*: Parallel queries are fast but run the risk of hitting API rate-limits. I implemented a semaphore-based queue to throttle requests while maintaining concurrent execution.
+  - *Thought Logging vs User Experience*: Gemma output includes thought tokens (`<thought>` or `<|think|>`). To keep the UI user-friendly, I filter out thought blocks on the client and render the output dynamically as markdown via `react-markdown` with refined styling for headings, tables, blockquotes, and lists.
+- **Design Iteration**: I began by drafting static prototypes (`code.html` and `1.html`) to visualize the layout and interactive panels before writing the React components.
+
+### Outcome & Results
+- **What changed**: The application now renders highly structured research reports beautifully. Bullet lists, comparative tables, and inline citations are highly readable, replacing plain unformatted text.
+- **Key Learnings**: React hooks and SSE stream buffering need careful management. I learned to use React's `useRef` and `useCallback` to manage stream state and abort signals dynamically to prevent UI lag or state contamination on subsequent runs.
+
+### Reflection
+If starting again today, I would plan more thoroughly at the start, especially researching about the UI/UX. While prototyping with static HTML files helped, establishing design tokens, responsiveness guidelines, and core components early on would have avoided refactoring churn when integrating the custom theme library into React.
 
 ---
 

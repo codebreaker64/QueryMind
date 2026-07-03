@@ -3,7 +3,7 @@ agent.py — Agentic loop (GPT-5.5 + MCP tool calls).
 
 Takes a research goal, sends it to GPT-5.5 with available tools,
 and loops: model reasons → calls tool → receives result → repeat.
-Streams intermediate events to the frontend via WebSocket.
+Streams intermediate events to the frontend via Server-Sent Events (SSE).
 """
 
 import asyncio
@@ -33,34 +33,93 @@ MAX_TIME_LIMIT = float(os.environ.get("MAX_TIME_LIMIT", "300.0"))
 # Delay in seconds between agent steps to prevent hitting rate limits (defaults to 2.0 seconds)
 STEP_DELAY = float(os.environ.get("STEP_DELAY", "2.0"))
 
-SYSTEM_PROMPT = """\
-You are QueryMind, an expert AI research agent. Your job is to thoroughly \
-research the user's question by searching the web and synthesizing findings \
-into a comprehensive, well-structured answer.
+PERSONA_PROMPT = """\
+You are QueryMind, a highly intelligent, warm, and human-like conversational research partner.
+- Voice: Friendly, curious, engaging, and professional yet accessible.
+- Style: Natural and conversational. Avoid stiff templates like "Certainly, I can help with that" or "Here is the information." Jump straight into the response or transition naturally.
+- Explanations: Explain complex topics clearly, as if you are discussing them with an intelligent colleague.
+- Formatting: Keep markdown styling clean and elegant. Bullet points, bold text, and numbered lists should serve readability and clarity, not overwhelm the text.
+
+Formatting Rules (follow these strictly):
+- Write in continuous prose with natural transitions. Do not convert paragraphs into bulleted lists unless the content is genuinely list-like (e.g. step-by-step instructions or a set of unrelated items).
+- Never use markdown tables. Present comparative or structured data in clear, flowing sentences instead.
+- Do not bold individual words or phrases inside sentences for emphasis. Bold is reserved for headings or genuinely critical standalone labels only.
+- Do not use H3 (###) headers to separate every paragraph. Use headers sparingly, only when the response has multiple major sections that genuinely benefit from clear delineation.
+- Write as if you are a smart colleague explaining this in a well-spaced Slack message or email — clear, concise, and narrative-driven. Not a structured database dump.
+"""
+
+RESEARCH_SYSTEM_PROMPT = PERSONA_PROMPT + """\
+Your job is to thoroughly address the user's queries by conducting deep web research.
 
 Guidelines:
-1. BEFORE searching: if the user's question is broad, ambiguous, or could \
-   have multiple valid interpretations, you MUST use the ask_user tool first \
-   to clarify their intent. Examples of questions that require clarification:
-   - "Tell me about X" (which aspect? history? technical details? use cases?)
-   - "What's the best Y?" (best for what purpose? what constraints?)
-   - "How do I do Z?" (what language/framework/skill level?)
-   - Any question where knowing more would significantly change the research direction.
-   Do NOT guess or assume — always ask first for these cases.
-2. Once you have clarity (or the question is already specific), run 2-4 parallel \
-   web searches with diverse, well-crafted queries to get broad coverage.
-3. After initial searches, analyze the results and run additional targeted searches \
-   if needed to fill gaps.
-4. When you have enough information, produce a final answer that is:
-   - Written in natural, warm, and human-friendly conversational language (avoid dry, robotic, or overly technical jargon; explain concepts clearly as if speaking to a colleague)
-   - Well-structured with clear sections and headings (use Markdown)
-   - Comprehensive but concise
-   - Includes specific facts, numbers, and details from your sources
-   - Cites sources inline using [1], [2], etc. notation
-5. End your final answer with a "Sources" section listing all referenced URLs.
-
-Important: Do NOT fabricate information. Only include facts found in search results.\
+1. BEFORE searching: if the user's question is broad, ambiguous, or could have multiple valid interpretations, you MUST use the ask_user tool first to clarify their intent.
+2. Conduct Web Research: Run parallel web searches with diverse, well-crafted queries to get broad coverage.
+3. Refine Search: Analyze the results and run additional targeted searches if needed to fill gaps.
+4. Formulate final response: When you have enough information, produce a comprehensive, well-structured final answer with specific facts, numbers, and details from your sources (with inline citations like [1], [2], etc., citing sources).
+5. Citing sources: End your final answer with a "Sources" section listing all referenced URLs.
 """
+
+QA_SYSTEM_PROMPT = PERSONA_PROMPT + """\
+You are answering a question about the existing research findings. You do not have access to web search tools or real-time web access for this turn.
+
+Below are the compiled research findings from previous steps. Answer the user's question directly and conversationally using ONLY the provided findings:
+
+=== COMPILED RESEARCH FINDINGS ===
+{findings_archive}
+==================================
+
+Answer the user's query clearly, referencing the findings above.
+"""
+
+
+async def route_intent(client, model: str, goal: str, conversation_history: list[dict]) -> str:
+    """
+    Evaluate if the user wants new research or is asking about existing findings.
+    Returns 'NEW_RESEARCH' or 'QUERY_FINDINGS'.
+    """
+    if not conversation_history:
+        return "NEW_RESEARCH"
+
+    system_instruction = (
+        "You are an intent router for a research agent. Your job is to classify the user's query into one of two categories:\n"
+        "1. 'NEW_RESEARCH': The user is asking to search the web for new topics, fresh facts, real-time events, or new questions not already answered in the findings.\n"
+        "2. 'QUERY_FINDINGS': The user is asking a follow-up question about the existing findings, asking to summarize them, translate them, format them, explain a detail in them, or continue a conversation about what has already been researched.\n\n"
+        "Respond with EXACTLY one of these two words: 'NEW_RESEARCH' or 'QUERY_FINDINGS'. Do not output any other text or reasoning."
+    )
+
+    history_snippets = []
+    # Send last 6 messages for context
+    for msg in conversation_history[-6:]:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        if role in ("user", "assistant") and content:
+            history_snippets.append(f"{role.capitalize()}: {content[:300]}")
+
+    context = "\n".join(history_snippets)
+
+    prompt = (
+        f"Conversation history:\n{context}\n\n"
+        f"Latest User Query: {goal}\n\n"
+        f"Category:"
+    )
+
+    try:
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=5,
+            temperature=0.0
+        )
+        val = response.choices[0].message.content.strip().upper()
+        if "QUERY_FINDINGS" in val:
+            return "QUERY_FINDINGS"
+        return "NEW_RESEARCH"
+    except Exception as e:
+        logger.error("Router error, defaulting to NEW_RESEARCH: %s", e)
+        return "NEW_RESEARCH"
 
 
 async def run_agent(
@@ -104,20 +163,38 @@ async def run_agent(
     # Build user message with optional attachments
     user_content = _build_user_message(goal, attachments)
 
-    # Try to load existing session from cache
+    # Load existing session from Redis (for conversation history and findings archive)
     existing_session = None
     if redis_store:
         existing_session = await redis_store.get_session(user_id, session_id)
 
-    # Initialize or load message history, search history and sources
-    if existing_session and "messages" in existing_session:
-        messages = existing_session["messages"]
-        messages.append({"role": "user", "content": user_content})
+    # Load session state (findings archive)
+    has_research = False
+    findings_archive = ""
+    clean_history = []
+
+    if existing_session:
+        has_research = existing_session.get("has_research", False)
+        findings_archive = existing_session.get("findings_archive", "")
+        # Filter out system messages to rebuild history
+        for msg in existing_session.get("messages", []):
+            if msg.get("role") != "system":
+                clean_history.append(msg)
+
+    # Determine Phase
+    if not has_research:
+        phase = "NEW_RESEARCH"
     else:
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
-        ]
+        phase = await route_intent(client, MODEL, goal, clean_history)
+
+    # Select System Prompt based on phase
+    if phase == "NEW_RESEARCH":
+        system_prompt = RESEARCH_SYSTEM_PROMPT
+    else:
+        system_prompt = QA_SYSTEM_PROMPT.format(findings_archive=findings_archive)
+
+    # Reconstruct messages with current phase system prompt at index 0
+    messages = [{"role": "system", "content": system_prompt}] + clean_history + [{"role": "user", "content": user_content}]
 
     search_history: list[str] = existing_session.get("searches", []) if existing_session else []
     sources_found: list[dict] = existing_session.get("sources", []) if existing_session else []
@@ -147,13 +224,19 @@ async def run_agent(
                 "step": step_count,
             })
 
-            # Call GPT-5.5
-            response = await client.chat.completions.create(
-                model=MODEL,
-                messages=messages,
-                tools=tools,
-                tool_choice="auto",
-            )
+            # Call Gemini (via OpenAI compatibility layer) with tools gated by active phase
+            if phase == "NEW_RESEARCH":
+                response = await client.chat.completions.create(
+                    model=MODEL,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice="auto",
+                )
+            else:
+                response = await client.chat.completions.create(
+                    model=MODEL,
+                    messages=messages,
+                )
 
             choice = response.choices[0]
             message = choice.message
@@ -260,12 +343,20 @@ async def run_agent(
 
                 # Persist to Redis
                 if redis_store:
+                    current_has_research = has_research
+                    current_findings = findings_archive
+                    if phase == "NEW_RESEARCH":
+                        current_has_research = True
+                        current_findings = final_answer
+
                     await redis_store.save_session(user_id, session_id, {
                         "goal": goal,
                         "answer": final_answer,
                         "sources": sources_found,
                         "searches": search_history,
                         "messages": messages,
+                        "has_research": current_has_research,
+                        "findings_archive": current_findings,
                         "attachments": [
                             {"filename": a["filename"]}
                             for a in (attachments or [])
@@ -290,12 +381,20 @@ async def run_agent(
 
             # Persist partial result
             if redis_store:
+                current_has_research = has_research
+                current_findings = findings_archive
+                if phase == "NEW_RESEARCH":
+                    current_has_research = True
+                    current_findings = partial_answer
+
                 await redis_store.save_session(user_id, session_id, {
                     "goal": goal,
                     "answer": partial_answer,
                     "sources": sources_found,
                     "searches": search_history,
                     "messages": messages,
+                    "has_research": current_has_research,
+                    "findings_archive": current_findings,
                 })
 
     except Exception as e:
@@ -310,6 +409,8 @@ async def run_agent(
         # Cleanup
         unregister_session(session_id)
         state_manager.clear(session_id)
+        if hasattr(ws_manager, "close_stream"):
+            ws_manager.close_stream(session_id)
 
 
 def _build_user_message(

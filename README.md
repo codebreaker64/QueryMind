@@ -104,8 +104,14 @@ The frontend will be available at `http://localhost:5173` and will proxy API req
 1. Open `http://localhost:5173` in your browser
 2. Type: *"What are the best open-source alternatives to Notion in 2026?"*
 3. Watch as the agent runs parallel searches and source cards appear
-4. If the agent needs clarification, a modal will appear — answer and click **Resume Research**
+4. If the agent needs clarification, a modal will appear — answer and click **Continue research**
 5. Read the comprehensive, cited answer that streams in
+
+---
+
+## Design and the Mote mascot
+
+The landing page is a scroll-driven story built with Three.js and GSAP ScrollTrigger. Mote, a glowing "thought" creature, is modelled by hand from Three.js primitives (`frontend/src/landing/mote.js`) and splits into copies to show parallel search, pauses to ask a question, and lights up the answer as citations land. It falls back to a still image without WebGL and to static final states when reduced motion is preferred. The design system is documented in [DESIGN.md](DESIGN.md) and the product brief in [PRODUCT.md](PRODUCT.md). To tweak or re-export the model, run the dev server and open `http://localhost:5173/mote-lab.html`.
 
 ---
 
@@ -123,6 +129,8 @@ querymind/
 │       └── hitl.py          # Human-in-the-loop pause/resume
 ├── frontend/
 │   ├── src/
+│   │   ├── landing/         # Three.js + GSAP landing page and the Mote model
+│   │   ├── components/      # MoteGlyph (2D mascot), GoogleSignIn
 │   │   ├── App.jsx          # Main layout + SSE connection & streaming
 │   │   ├── SearchBar.jsx    # Perplexity-style query input
 │   │   ├── AnswerPanel.jsx  # Streaming answer + source display

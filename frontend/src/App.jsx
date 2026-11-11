@@ -1,6 +1,7 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import './index.css'
+import './app.css'
 import { Theme } from '@astryxdesign/core'
 import { stoneTheme } from '@astryxdesign/theme-stone/built'
 import { VStack, HStack, Layout, LayoutContent } from '@astryxdesign/core/Layout'
@@ -19,9 +20,7 @@ import {
   ChatMessageBubble,
   ChatMessageList,
 } from '@astryxdesign/core/Chat'
-import { Avatar } from '@astryxdesign/core/Avatar'
 import {
-  SparklesIcon,
   CodeBracketIcon,
   PencilSquareIcon,
   MagnifyingGlassIcon,
@@ -31,10 +30,12 @@ import {
 } from '@heroicons/react/24/outline'
 
 import useAuth from './useAuth'
-import AuthScreen from './AuthScreen'
+import Landing from './landing/Landing'
 import HistorySidebar from './HistorySidebar'
 import SourceCard from './SourceCard'
 import HITLModal from './HITLModal'
+import MoteGlyph from './components/MoteGlyph'
+import { Loader2, Library, AlertCircle } from 'lucide-react'
 
 const API_BASE = ''
 
@@ -108,6 +109,8 @@ const CATEGORY_SUGGESTIONS = {
 export default function App() {
   const auth = useAuth()
   const [isAnonymous, setIsAnonymous] = useState(false)
+  // A question typed on the landing page before signing in; run it once we're in.
+  const pendingQueryRef = useRef(null)
 
   // Core research state
   const [isResearching, setIsResearching] = useState(false)
@@ -290,7 +293,7 @@ export default function App() {
     const generateUUID = () => {
       try {
         return crypto.randomUUID()
-      } catch (e) {
+      } catch {
         return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
       }
     }
@@ -436,17 +439,25 @@ export default function App() {
       } else {
         setError('Failed to load session details')
       }
-    } catch (err) {
+    } catch {
       setError('Error loading session')
     }
   }, [auth])
 
   const isAuthenticated = auth.isAuthenticated || isAnonymous
+
+  useEffect(() => {
+    if (isAuthenticated && pendingQueryRef.current) {
+      const q = pendingQueryRef.current
+      pendingQueryRef.current = null
+      handleSearch(q)
+    }
+  }, [isAuthenticated, handleSearch])
   const user = auth.user || (isAnonymous ? { name: 'Anonymous User', email: 'anonymous@querymind.ai' } : null)
 
   if (auth.isLoading) {
     return (
-      <div style={{ display: 'flex', minHeight: '100vh', alignItems: 'center', justifyContent: 'center', backgroundColor: '#1C1917' }}>
+      <div style={{ display: 'flex', minHeight: '100vh', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--qm-night)' }}>
         <div className="thinking-dots">
           <span></span>
           <span></span>
@@ -458,15 +469,17 @@ export default function App() {
 
   if (!isAuthenticated) {
     return (
-      <Theme theme={stoneTheme} mode="dark">
-        <AuthScreen onLogin={async (credential) => {
+      <Landing
+        onLogin={async (credential, question) => {
+          if (question) pendingQueryRef.current = question
+          window.scrollTo(0, 0)
           if (credential === null) {
             setIsAnonymous(true)
           } else {
             await auth.login(credential)
           }
-        }} />
-      </Theme>
+        }}
+      />
     )
   }
 
@@ -508,16 +521,16 @@ export default function App() {
                   onClick={() => setSidebarOpen(true)}
                 />
               )}
-              <HStack gap={2} vAlign="center">
-                <Icon icon={SparklesIcon} size="sm" style={{ color: 'var(--color-accent)' }} />
-                <Heading level={4} style={{ color: 'var(--color-accent)', margin: 0 }}>
+              {!sidebarOpen && (
+                <span className="qm-app-wordmark">
+                  <MoteGlyph size={26} />
                   QueryMind
-                </Heading>
-              </HStack>
+                </span>
+              )}
             </HStack>
             {!isLanding && (
               <Button
-                label="New Session"
+                label="New research"
                 variant="secondary"
                 size="sm"
                 icon={<Icon icon={PlusIcon} size="sm" />}
@@ -533,21 +546,17 @@ export default function App() {
                 <VStack gap={8} vAlign="center" style={{ minHeight: '100%', justifyContent: 'center', paddingBottom: '10vh' }}>
                   {/* Greeting */}
                   <VStack gap={2} hAlign="center">
-                    <HStack gap={2} vAlign="center">
-                      <Icon icon={SparklesIcon} size="md" style={{ color: 'var(--color-accent)' }} />
-                      <Text type="large" as="h2" weight="bold">
-                        Hi, {user?.name || 'Researcher'}
-                      </Text>
-                    </HStack>
-                    <Heading level={1} type="display-2" justify="center">
-                      What would you like to research today?
-                    </Heading>
+                    <MoteGlyph size={72} className="qm-app-hello-mote" />
+                    <Text type="large" as="p" weight="semibold" color="secondary">
+                      {auth.user?.name ? `Hi, ${auth.user.name.split(' ')[0]}` : 'Hi there'}
+                    </Text>
+                    <h1 className="qm-app-hello">What should Mote look into?</h1>
                   </VStack>
 
                   {/* Composer / Search Bar */}
                   <ChatComposer
                     onSubmit={(value) => handleSearch(value)}
-                    placeholder="Ask autonomous agents to gather web intelligence..."
+                    placeholder="Ask a question. Mote will search, check with you if needed, and cite every source."
                     input={
                       <ChatComposerInput
                         style={{ minHeight: 80 }}
@@ -614,13 +623,13 @@ export default function App() {
                         <ChatMessage 
                           key={index} 
                           sender={msg.role === 'user' ? 'user' : 'assistant'} 
-                          avatar={msg.role === 'assistant' ? <Avatar name="Agent" size="small" /> : null}
+                          avatar={msg.role === 'assistant' ? <MoteGlyph size={30} title="Mote" /> : null}
                         >
                           <ChatMessageBubble variant={msg.role === 'assistant' ? 'ghost' : 'default'} style={{ maxWidth: '100%' }}>
-                            <div className="font-body text-sm text-slate-200" style={{ lineHeight: '1.6' }}>
+                            <div className="qm-msg">
                               {isThinkingEmpty ? (
                                 <div className="flex items-center gap-2 py-1">
-                                  <span className="text-xs text-slate-400 font-sans animate-pulse">Thinking</span>
+                                  <span className="qm-thinking-label">Mote is reading</span>
                                   <div className="thinking-dots flex items-center">
                                     <span></span>
                                     <span></span>
@@ -642,11 +651,18 @@ export default function App() {
                   </ChatMessageList>
                 </div>
 
+                {error && (
+                  <div className="qm-error-banner" role="alert">
+                    <AlertCircle size={16} aria-hidden="true" />
+                    <span>{error}</span>
+                  </div>
+                )}
+
                 {/* Follow up Composer */}
                 <div style={{ padding: 'var(--spacing-6)', borderTop: '1px solid var(--color-border)', backgroundColor: 'var(--color-background-surface)' }}>
                   <ChatComposer
                     onSubmit={(value) => handleSearch(value)}
-                    placeholder="Ask a follow-up or refine the research..."
+                    placeholder="Ask a follow-up or narrow the question"
                     isDisabled={isResearching}
                     input={
                       <ChatComposerInput />
@@ -679,18 +695,18 @@ export default function App() {
               >
                 <VStack gap={4} width="100%">
                   <Heading level={4} style={{ margin: 0 }}>
-                    Sources Found ({sources.length})
+                    Sources ({sources.length})
                   </Heading>
                   {isThinking && searches.length > 0 && (
-                    <div className="flex items-center gap-2 text-indigo-400 text-xs animate-pulse">
-                      <span className="animate-spin material-symbols-outlined text-[16px]">sync</span>
-                      <span>Searching: {searches.join(', ')}...</span>
+                    <div className="qm-searching" role="status">
+                      <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                      <span>Searching: {searches.join(', ')}</span>
                     </div>
                   )}
                   {sources.length === 0 ? (
-                    <div style={{ padding: 'var(--spacing-8)', textAlign: 'center', color: 'var(--color-text-secondary)', marginTop: '20vh' }}>
-                      <span className="material-symbols-outlined text-4xl opacity-30 mb-2">database</span>
-                      <p className="text-xs text-slate-500">No sources crawled yet.</p>
+                    <div className="qm-sources-empty">
+                      <Library size={28} aria-hidden="true" />
+                      <p>{isThinking ? 'Sources will appear here as Mote finds them.' : 'No sources for this answer yet.'}</p>
                     </div>
                   ) : (
                     <VStack gap={3} width="100%">

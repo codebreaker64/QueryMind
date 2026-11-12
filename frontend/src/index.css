@@ -8,12 +8,27 @@
 @import "@astryxdesign/core/tailwind-theme.css";
 @import "tailwindcss/utilities.css" layer(utilities);
 
-/* ── Custom overrides & additions ─────────────────────────────── */
+/* ── QueryMind world tokens ──────────────────────────────────────
+   Deep-teal night, lit by Mote's apricot glow. */
 :root {
+  --qm-ink: #08191d;
+  --qm-night: #0d262b;
+  --qm-night-2: #13323a;
+  --qm-night-3: #1a3d45;
+  --qm-tide: #2a535a;
+  --qm-mist: #a9c4c1;
+  --qm-foam: #eef6f3;
+  --qm-glow: #ffb357;
+  --qm-glow-2: #ffd27a;
+  --qm-ember: #c4561c;
+  --qm-paper: #fff6e8;
+  --qm-font-display: 'Bricolage Grotesque Variable', 'Bricolage Grotesque', system-ui, sans-serif;
+  --qm-font-body: 'Geist Variable', 'Geist', system-ui, -apple-system, sans-serif;
+
   --bg-primary: var(--color-background-body);
   --bg-secondary: var(--color-background-surface);
   --bg-surface: var(--color-background-surface);
-  --bg-surface-hover: var(--color-muted);
+  --bg-surface-hover: var(--color-background-muted);
   --border-subtle: var(--color-border);
   --border-accent: var(--color-accent);
   --text-primary: var(--color-text-primary);
@@ -23,15 +38,41 @@
   --accent-bright: var(--color-accent);
   --success: var(--color-accent);
   --warning: var(--color-accent);
-  --error: var(--color-accent);
-  --font-sans: 'Figtree', 'Inter', system-ui, -apple-system, sans-serif;
+  --error: var(--color-error);
+  --font-sans: var(--qm-font-body);
+}
+
+/* Re-skin the Astryx stone theme into the QueryMind world (dark mode). */
+@layer components {
+  [data-astryx-theme='stone'] {
+    --color-background-body: var(--qm-night);
+    --color-background-surface: #0f2c32;
+    --color-background-card: var(--qm-night-2);
+    --color-background-popover: var(--qm-night-2);
+    --color-background-muted: var(--qm-night-3);
+    --color-border: #24474e;
+    --color-border-emphasized: var(--qm-tide);
+    --color-text-primary: var(--qm-foam);
+    --color-text-secondary: var(--qm-mist);
+    --color-accent: var(--qm-glow);
+    --color-accent-muted: rgb(255 179 87 / 0.16);
+    --color-text-accent: var(--qm-glow);
+    --color-icon-accent: var(--qm-glow);
+    --color-on-accent: var(--qm-ink);
+    --font-family-body: var(--qm-font-body);
+    --font-family-heading: var(--qm-font-display);
+  }
 }
 
 /* ── Base resets ────────────────────────────────────────────────── */
+html {
+  scrollbar-color: var(--qm-tide) var(--qm-night);
+}
+
 body {
   font-family: var(--font-sans);
-  background-color: var(--color-background-body);
-  color: var(--color-text-primary);
+  background-color: var(--qm-night);
+  color: var(--qm-foam);
   min-height: 100vh;
   line-height: 1.6;
 }
@@ -45,10 +86,10 @@ body {
   width: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--color-background-body);
+  background: var(--qm-night);
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--color-muted);
+  background: var(--qm-tide);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
@@ -170,7 +211,7 @@ body {
 }
 
 .markdown-content code {
-  background: var(--color-muted);
+  background: var(--color-background-muted);
   padding: 0.15rem 0.4rem;
   border-radius: 4px;
   font-size: 0.875rem;
@@ -178,7 +219,7 @@ body {
 }
 
 .markdown-content pre {
-  background: var(--color-muted);
+  background: var(--color-background-muted);
   padding: 1rem;
   border-radius: 8px;
   overflow-x: auto;
@@ -220,7 +261,7 @@ body {
 }
 
 .markdown-content th {
-  background-color: var(--color-muted);
+  background-color: var(--color-background-muted);
   font-weight: 600;
   color: var(--color-text-primary);
 }
@@ -243,4 +284,9 @@ body {
 .markdown-content a:hover {
   color: var(--color-accent);
   text-decoration: none;
+}
+
+::selection {
+  background: var(--qm-glow);
+  color: var(--qm-ink);
 }

@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mote lab</title>
+    <!--
+      Dev-only sandbox for the Mote model (not part of the production build).
+      Open http://localhost:5173/mote-lab.html while `npm run dev` is running.
+      Query flags: ?transparent=1  ?wave=1  ?ry=0.3
+      window.exportMoteGLB() returns the model as a base64 .glb string.
+    -->
+    <style>
+      html, body { margin: 0; height: 100%; background: #0d262b; }
+      .transparent, .transparent body { background: transparent; }
+      canvas { display: block; }
+    </style>
+  </head>
+  <body>
+    <script type="module">
+      import * as THREE from 'three'
+      import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
+      import { createMote } from '/src/landing/mote.js'
+
+      const params = new URLSearchParams(location.search)
+      if (params.get('transparent')) document.documentElement.classList.add('transparent')
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true })
+      renderer.setSize(innerWidth, innerHeight)
+      renderer.setPixelRatio(Number(params.get('dpr') || devicePixelRatio))
+      renderer.toneMapping = THREE.NeutralToneMapping
+      renderer.outputColorSpace = THREE.SRGBColorSpace
+      renderer.setClearColor(0x000000, 0)
+      document.body.appendChild(renderer.domElement)
+
+      const scene = new THREE.Scene()
+      const camera = new THREE.PerspectiveCamera(32, innerWidth / innerHeight, 0.1, 50)
+      camera.position.set(0, 0.3, 7.5)
+      scene.add(new THREE.HemisphereLight('#fff3df', '#0d262b', 1.1))
+      const key = new THREE.DirectionalLight('#fff4e0', 1.6)
+      key.position.set(-2, 3, 4)
+      scene.add(key)
+
+      const mote = createMote()
+      mote.root.rotation.y = Number(params.get('ry') || 0.3)
+      mote.state.wave = Number(params.get('wave') || 0)
+      scene.add(mote.root)
+
+      const clock = new THREE.Clock()
+      const still = params.get('still')
+      function frame() {
+        const t = still ? 0.4 : clock.getElapsedTime()
+        mote.update(t, 0.016)
+        renderer.render(scene, camera)
+        if (!still) requestAnimationFrame(frame)
+      }
+      frame()
+      window.__ready = true
+
+      // Export the geometry and base materials (the shader glow is runtime-only).
+      window.exportMoteGLB = () =>
+        new Promise((resolve, reject) => {
+          const clean = createMote()
+          clean.parts.halo.removeFromParent()
+          clean.parts.shadow.removeFromParent()
+          clean.root.traverse((o) => {
+            if (o.isLight || o.isSprite) o.visible = false
+          })
+          new GLTFExporter().parse(
+            clean.root,
+            (buf) => {
+              const bytes = new Uint8Array(buf)
+              let bin = ''
+              for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+              resolve(btoa(bin))
+            },
+            reject,
+            { binary: true, onlyVisible: true }
+          )
+        })
+    </script>
+  </body>
+</html>

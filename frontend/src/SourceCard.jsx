@@ -57,7 +57,7 @@ export default function SourceCard({ source, index }) {
                 <Text type="label" weight="semibold" style={{ truncate: true, color: 'var(--color-text-primary)' }}>
                   {title || 'Untitled Source'}
                 </Text>
-                <Token label={String(index + 1)} variant="blue" size="sm" />
+                <Token label={String(index)} variant="orange" size="sm" />
               </HStack>
               <Icon icon={ArrowTopRightOnSquareIcon} size="sm" style={{ color: 'var(--color-text-secondary)', opacity: 0.6 }} />
             </HStack>

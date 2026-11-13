@@ -1,7 +1,8 @@
 """
-agent.py — Agentic loop (GPT-5.5 + MCP tool calls).
+agent.py — Agentic loop (Gemma 4 via the Gemini API + MCP tool calls).
 
-Takes a research goal, sends it to GPT-5.5 with available tools,
+Takes a research goal, sends it to Gemma 4 (through Gemini's OpenAI-compatible
+endpoint) with available tools,
 and loops: model reasons → calls tool → receives result → repeat.
 Streams intermediate events to the frontend via Server-Sent Events (SSE).
 """

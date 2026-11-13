@@ -1,150 +1,169 @@
-# QueryMind
+<p align="center">
+  <img src="frontend/public/mote.png" alt="Mote, the QueryMind mascot" width="96" />
+</p>
 
-**AI-powered research agent with human-in-the-loop** — A Perplexity-style web application that searches the web, asks clarifying questions, and delivers comprehensive answers with cited sources.
+<h1 align="center">QueryMind</h1>
 
+<p align="center">
+  An AI research agent that searches the web in parallel, asks clarifying questions when it needs to, and answers with cited sources.
+</p>
 
-
-https://github.com/user-attachments/assets/fae4a0a7-3788-4d66-ac3b-08245a44eb26
-
-
-
-https://github.com/user-attachments/assets/c80ddf09-8af8-4381-914c-cc3bfa2e2a70
-
-
+<p align="center">
+  <a href="docs/media/querymind-tour.mp4">
+    <img src="docs/media/tour-preview.gif" alt="Scrolling through the QueryMind landing page: Mote splits into copies to search in parallel, pauses to ask a question, then presents a cited answer" width="720" />
+  </a>
+  <br />
+  <sub><a href="docs/media/querymind-tour.mp4">Watch the full 43-second tour (MP4)</a></sub>
+</p>
 
 ---
 
-## Architecture
+## What it does
 
+You ask a question. QueryMind's agent breaks it into several focused web searches and runs them at the same time. If your question could mean two different things, the agent stops and asks you which you meant, then carries on from where it paused. The answer streams back as it is written, with every claim numbered and linked to the source it came from.
+
+| Landing page | Research app |
+|---|---|
+| ![The landing page section explaining parallel search, with Mote split into four copies beside four search queries](docs/media/landing-parallel.png) | ![The research app in guest mode, with the history sidebar and the "What should Mote look into?" prompt](docs/media/app.png) |
+
+### Features
+
+- **Parallel web search.** The model can request several searches in one step; they run concurrently through `asyncio.gather`, throttled by an `asyncio.Semaphore(3)` and a small random delay so the Tavily API is not hammered.
+- **Human in the loop.** An `ask_user` tool lets the model pause the run. The backend parks the agent on an `asyncio.Event`, streams a `pause` event to the browser, and wakes up when the answer arrives at `POST /sessions/{id}/resume`.
+- **Streaming over Server-Sent Events.** `POST /research` returns a `text/event-stream` of `searching`, `source_found`, `reasoning`, `pause`, `done` and `error` events, so the UI shows progress as it happens.
+- **Cited answers.** Sources appear as numbered cards beside the answer, and the answer's inline citations point back to them.
+- **File attachments.** Upload a PDF, CSV or plain-text file (up to 10 MB) and its text is added to the agent's context.
+- **Accounts and history.** Sign in with Google (JWT sessions, users in SQLite) or continue as a guest. Research sessions are stored in Redis for 30 days, falling back to memory if Redis is not running.
+- **A designed front door.** A scroll-driven landing page built with Three.js and GSAP, starring Mote, a hand-modelled mascot that acts out each step of a run.
+
+---
+
+## How it works
+
+```mermaid
+flowchart LR
+    UI["React + Vite UI"] -- "POST /research" --> API["FastAPI"]
+    API -- "SSE event stream" --> UI
+    UI -- "POST /sessions/{id}/resume" --> API
+    API --> Agent["Agent loop"]
+    Agent -- "OpenAI-compatible API" --> LLM["Gemma 4 via Gemini API"]
+    Agent -- "tool calls" --> MCP["MCP tool registry"]
+    MCP --> Search["web_search: Tavily, 3 at a time"]
+    MCP --> Ask["ask_user: pause and wait"]
+    API --> Redis[("Redis: sessions")]
+    API --> SQLite[("SQLite: users")]
 ```
-┌──────────────┐  SSE (Streaming)  ┌──────────────┐    Gemini API    ┌──────────┐
-│   React UI   │ ◄───────────────  │   FastAPI     │ ◄─────────────► │  Gemma 4 │
-│  (Vite)      │  ──────────────►  │   Backend     │                  └──────────┘
-└──────────────┘    REST (Post)    │               │    Tavily API   ┌──────────┐
-                                   │   Agent Loop  │ ◄─────────────► │  Tavily  │
-                                   │   MCP Server  │                  │  Search  │
-                                   └──────────────┘                  └──────────┘
-```
 
-### Key Features
-- **Parallel Web Search** — Runs multiple Tavily searches concurrently with rate limiting
-- **Human-in-the-Loop** — Agent pauses mid-workflow to ask clarifying questions
-- **Streaming Answers** — Progressive display of reasoning and sources via Server-Sent Events (SSE)
-- **Cited Sources** — Every claim is backed by numbered citations with source cards
-- **State Persistence** — Agent state serialized to JSON for seamless pause/resume
+The agent loop in `backend/agent.py` is a plain tool-calling loop rather than a framework. On each step it sends the conversation to the model with two tools available, `web_search` and `ask_user`, whose schemas are registered with the MCP Python SDK in `backend/mcp_server.py` and converted to OpenAI function-calling format. Search calls in the same step are fanned out together; an `ask_user` call suspends the loop until the user replies. The loop stops when the model produces a final answer, or when it reaches `MAX_STEPS` (15) or `MAX_TIME_LIMIT` (300 seconds), so a confused model cannot run up an unbounded bill.
+
+The model client is the `openai` SDK pointed at Gemini's OpenAI-compatible endpoint. Setting `OPENAI_BASE_URL` and `MODEL_NAME` swaps in any other OpenAI-compatible provider without code changes.
 
 ---
 
-## Tech Stack
+## Tech stack
 
-| Layer    | Technology                       |
-|----------|----------------------------------|
-| Frontend | React + Tailwind CSS v4 (Vite)   |
-| Backend  | Python + FastAPI (SSE)           |
-| LLM      | Gemma 4 (Gemini API)             |
-| Search   | Tavily Python SDK                |
-| Protocol | MCP Python SDK                   |
-| Async    | asyncio + Semaphore              |
+| Layer | Technology |
+|---|---|
+| Frontend | React 19, Vite, Tailwind CSS v4, shadcn/Radix UI, `react-markdown` |
+| Landing page | Three.js, GSAP ScrollTrigger |
+| Backend | Python, FastAPI, Uvicorn, Server-Sent Events |
+| Model | Gemma 4 (`gemma-4-31b-it`) through the Gemini API's OpenAI-compatible endpoint |
+| Tools | MCP Python SDK for tool schemas, Tavily for search |
+| Concurrency | `asyncio` with a semaphore for rate limiting |
+| Auth and storage | Google Identity Services, JWT (`python-jose`), SQLite (`aiosqlite`), Redis |
 
 ---
 
-## Setup
+## Running it locally
 
 ### Prerequisites
-- **Python 3.11+**
-- **Node.js 18+**
-- **Gemini API key**
-- **Tavily API key** ([get one free](https://tavily.com))
 
-### 1. Clone & configure environment
+- Python 3.11 or newer
+- Node.js 20.19 or newer (Vite 8 requires it)
+- A [Gemini API key](https://aistudio.google.com/apikey) and a [Tavily API key](https://tavily.com). Both have free tiers.
+- Optional: Redis, for history that survives a restart, and a Google OAuth client ID, for sign-in. Without either, the app still runs: history is kept in memory and you can continue as a guest.
 
-```bash
-# Copy the environment template
-cp .env.example .env
+The commands below are for PowerShell on Windows.
 
-# Edit .env and add your API keys
-# GEMINI_API_KEY=AQ...
-# TAVILY_API_KEY=tvly-...
+### 1. Configure the environment
+
+```powershell
+git clone https://github.com/codebreaker64/QueryMind.git
+cd QueryMind
+Copy-Item .env.example .env
+notepad .env   # fill in GEMINI_API_KEY and TAVILY_API_KEY
 ```
 
-### 2. Install backend dependencies
+Both the backend and the frontend read this one `.env` file in the repository root.
 
-```bash
+### 2. Start the backend
+
+```powershell
 cd backend
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-```
-
-### 3. Install frontend dependencies
-
-```bash
-cd frontend
-npm install
-```
-
-### 4. Run the application
-
-**Terminal 1 — Backend:**
-```bash
-cd backend
 uvicorn main:app --reload --port 8000
 ```
 
-**Terminal 2 — Frontend:**
-```bash
+### 3. Start the frontend (in a second terminal)
+
+```powershell
 cd frontend
+npm install
 npm run dev
 ```
 
-The frontend will be available at `http://localhost:5173` and will proxy API requests to the backend on port 8000.
+Open http://localhost:5173. Vite proxies API calls to the backend on port 8000. Choose **Continue without an account** if you have not set up Google sign-in.
+
+### Try it
+
+Ask something with more than one reasonable reading, such as *"Should a three-person team pick LangGraph or CrewAI for its first agent?"*. You should see several searches start at once and source cards appear, and the agent may stop to ask what matters most to you before writing a cited answer.
 
 ---
 
-## Example Usage
+## Project structure
 
-1. Open `http://localhost:5173` in your browser
-2. Type: *"What are the best open-source alternatives to Notion in 2026?"*
-3. Watch as the agent runs parallel searches and source cards appear
-4. If the agent needs clarification, a modal will appear — answer and click **Continue research**
-5. Read the comprehensive, cited answer that streams in
+```
+QueryMind/
+├── backend/
+│   ├── main.py              # FastAPI app: research SSE stream, resume, sessions, upload, auth
+│   ├── agent.py             # Tool-calling agent loop (Gemma 4 via the Gemini API)
+│   ├── mcp_server.py        # MCP tool definitions and dispatch
+│   ├── state.py             # Agent state serialisation for pause and resume
+│   ├── auth.py              # Google token verification and JWTs
+│   ├── database.py          # SQLite user store
+│   ├── redis_store.py       # Session history in Redis, with in-memory fallback
+│   └── tools/
+│       ├── search.py        # Tavily search with concurrency limits
+│       ├── hitl.py          # ask_user: pause and wait for an answer
+│       └── file_processor.py# Text extraction from PDF, CSV and text uploads
+├── frontend/
+│   ├── src/
+│   │   ├── landing/         # Three.js + GSAP landing page and the Mote model
+│   │   ├── components/      # MoteGlyph, GoogleSignIn, shadcn UI primitives
+│   │   ├── App.jsx          # Research app: SSE handling and layout
+│   │   ├── AnswerPanel.jsx  # Streaming answer and sources
+│   │   ├── HITLModal.jsx    # Clarifying-question dialog
+│   │   ├── HistorySidebar.jsx
+│   │   ├── SearchBar.jsx
+│   │   └── SourceCard.jsx
+│   └── mote-lab.html        # Tweak and re-export the Mote model
+├── docs/media/              # Demo video and screenshots used in this README
+├── DESIGN.md                # Design system
+├── PRODUCT.md               # Product brief
+└── .env.example
+```
 
 ---
 
 ## Design and the Mote mascot
 
-The landing page is a scroll-driven story built with Three.js and GSAP ScrollTrigger. Mote, a glowing "thought" creature, is modelled by hand from Three.js primitives (`frontend/src/landing/mote.js`) and splits into copies to show parallel search, pauses to ask a question, and lights up the answer as citations land. It falls back to a still image without WebGL and to static final states when reduced motion is preferred. The design system is documented in [DESIGN.md](DESIGN.md) and the product brief in [PRODUCT.md](PRODUCT.md). To tweak or re-export the model, run the dev server and open `http://localhost:5173/mote-lab.html`.
+Mote is modelled by hand from Three.js primitives in `frontend/src/landing/mote.js`. On the landing page it splits into copies to show parallel search, pauses to ask a question, and lights up the answer as citations land. The page falls back to a still image without WebGL and to static end states when the visitor prefers reduced motion. The design system is in [DESIGN.md](DESIGN.md) and the product brief in [PRODUCT.md](PRODUCT.md). To adjust the model, run the dev server and open http://localhost:5173/mote-lab.html.
 
 ---
 
-## Project Structure
-
-```
-querymind/
-├── backend/
-│   ├── main.py              # FastAPI app + SSE streaming
-│   ├── agent.py             # Agentic loop (Gemma 4 + tool calls)
-│   ├── mcp_server.py        # MCP tool registration + dispatch
-│   ├── state.py             # JSON state serialization
-│   └── tools/
-│       ├── search.py        # Tavily web search with rate limiting
-│       └── hitl.py          # Human-in-the-loop pause/resume
-├── frontend/
-│   ├── src/
-│   │   ├── landing/         # Three.js + GSAP landing page and the Mote model
-│   │   ├── components/      # MoteGlyph (2D mascot), GoogleSignIn
-│   │   ├── App.jsx          # Main layout + SSE connection & streaming
-│   │   ├── SearchBar.jsx    # Perplexity-style query input
-│   │   ├── AnswerPanel.jsx  # Streaming answer + source display
-│   │   ├── HITLModal.jsx    # Clarification modal
-│   │   ├── SourceCard.jsx   # Citation tile component
-│   │   └── index.css        # Design system + dark theme
-│   └── index.html
-├── .env.example
-└── README.md
-```
-
----
-
-## Project Documentation & Reflection
+## Project notes and reflection
 
 ### What was built and the problem I was trying to solve
 QueryMind is an autonomous, AI-driven research assistant designed to solve "twenty-tab search fatigue." When users research complex or niche topics, they typically spend hours sorting through search engine results, parsing long articles, and manually verifying references. 
@@ -173,6 +192,6 @@ If starting again today, I would plan more thoroughly at the start, especially r
 
 ---
 
-## License
+## Licence
 
 MIT

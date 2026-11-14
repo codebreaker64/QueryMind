@@ -9,11 +9,11 @@
 </p>
 
 <p align="center">
-  <a href="docs/media/querymind-tour.mp4">
-    <img src="docs/media/tour-preview.gif" alt="Scrolling through the QueryMind landing page: Mote splits into copies to search in parallel, pauses to ask a question, then presents a cited answer" width="720" />
+  <a href="docs/media/querymind-demo.mp4">
+    <img src="docs/media/demo-preview.gif" alt="A real QueryMind run: the user asks which open-source LLM to run locally, Mote asks about their hardware and goal, searches the web in parallel, and answers with numbered citations" width="720" />
   </a>
   <br />
-  <sub><a href="docs/media/querymind-tour.mp4">Watch the full 43-second tour (MP4)</a></sub>
+  <sub><a href="docs/media/querymind-demo.mp4">Watch the full 97-second demo (MP4)</a>: a tour of the landing page, then a real, unscripted research run. The waiting parts of the run are sped up and labelled.</sub>
 </p>
 
 ---
@@ -54,7 +54,7 @@ flowchart LR
     API --> SQLite[("SQLite: users")]
 ```
 
-The agent loop in `backend/agent.py` is a plain tool-calling loop rather than a framework. On each step it sends the conversation to the model with two tools available, `web_search` and `ask_user`, whose schemas are registered with the MCP Python SDK in `backend/mcp_server.py` and converted to OpenAI function-calling format. Search calls in the same step are fanned out together; an `ask_user` call suspends the loop until the user replies. The loop stops when the model produces a final answer, or when it reaches `MAX_STEPS` (15) or `MAX_TIME_LIMIT` (300 seconds), so a confused model cannot run up an unbounded bill.
+The agent loop in `backend/agent.py` is a plain tool-calling loop rather than a framework. On each step it sends the conversation to the model with two tools available, `web_search` and `ask_user`, whose schemas are registered with the MCP Python SDK in `backend/mcp_server.py` and converted to OpenAI function-calling format. Search calls in the same step are fanned out together; an `ask_user` call suspends the loop until the user replies. The loop stops when the model produces a final answer, or when it reaches `MAX_STEPS` (15) or `MAX_TIME_LIMIT` (300 seconds), so a confused model cannot run up an unbounded bill. On the free tier the Gemini API limits tokens per minute, and the final call carries every source snippet, so it can hit that limit. When the API answers 429, the agent waits for the window to reset (60 seconds by default, `RATE_LIMIT_WAIT`) and retries, up to `RATE_LIMIT_RETRIES` (2) times.
 
 The model client is the `openai` SDK pointed at Gemini's OpenAI-compatible endpoint. Setting `OPENAI_BASE_URL` and `MODEL_NAME` swaps in any other OpenAI-compatible provider without code changes.
 
@@ -149,7 +149,7 @@ QueryMind/
 │   │   ├── SearchBar.jsx
 │   │   └── SourceCard.jsx
 │   └── mote-lab.html        # Tweak and re-export the Mote model
-├── docs/media/              # Demo video and screenshots used in this README
+├── docs/media/              # Demo video, preview GIF and screenshots used in this README
 ├── DESIGN.md                # Design system
 ├── PRODUCT.md               # Product brief
 └── .env.example

@@ -13,7 +13,7 @@ import logging
 import os
 import traceback
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +73,32 @@ Answer the user's query clearly, referencing the findings above.
 """
 
 
+# Free-tier Gemini quotas are counted per minute, so the client's own retries
+# (a few seconds apart) all land inside the same window and fail together.
+# On a 429 we wait for the window to reset, then try again.
+RATE_LIMIT_RETRIES = int(os.environ.get("RATE_LIMIT_RETRIES", "2"))
+RATE_LIMIT_WAIT = float(os.environ.get("RATE_LIMIT_WAIT", "60"))
+
+
+async def _create_completion(client, **kwargs):
+    """Call chat.completions.create, waiting out per-minute rate limits."""
+    for attempt in range(RATE_LIMIT_RETRIES + 1):
+        try:
+            return await client.chat.completions.create(**kwargs)
+        except RateLimitError as exc:
+            if attempt == RATE_LIMIT_RETRIES:
+                raise
+            retry_after = None
+            if exc.response is not None:
+                try:
+                    retry_after = float(exc.response.headers.get("retry-after", ""))
+                except ValueError:
+                    retry_after = None
+            wait = retry_after or RATE_LIMIT_WAIT
+            logger.warning("Rate limited by the model API; retrying in %.0f s", wait)
+            await asyncio.sleep(wait)
+
+
 async def route_intent(client, model: str, goal: str, conversation_history: list[dict]) -> str:
     """
     Evaluate if the user wants new research or is asking about existing findings.
@@ -105,7 +131,8 @@ async def route_intent(client, model: str, goal: str, conversation_history: list
     )
 
     try:
-        response = await client.chat.completions.create(
+        response = await _create_completion(
+            client,
             model=model,
             messages=[
                 {"role": "system", "content": system_instruction},
@@ -227,14 +254,16 @@ async def run_agent(
 
             # Call Gemini (via OpenAI compatibility layer) with tools gated by active phase
             if phase == "NEW_RESEARCH":
-                response = await client.chat.completions.create(
+                response = await _create_completion(
+                    client,
                     model=MODEL,
                     messages=messages,
                     tools=tools,
                     tool_choice="auto",
                 )
             else:
-                response = await client.chat.completions.create(
+                response = await _create_completion(
+                    client,
                     model=MODEL,
                     messages=messages,
                 )

@@ -151,7 +151,7 @@ QueryMind/
 │   │   ├── SearchBar.jsx
 │   │   └── SourceCard.jsx
 │   └── mote-lab.html        # Tweak and re-export the Mote model
-├── docs/media/              # Demo video, preview GIF and screenshots used in this README
+├── docs/media/              # Screenshots used in this README
 ├── DESIGN.md                # Design system
 └── .env.example
 ```

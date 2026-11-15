@@ -13,7 +13,7 @@
     <img src="docs/media/demo-preview.gif" alt="A real QueryMind run: the user asks which open-source LLM to run locally, Mote asks about their hardware and goal, searches the web in parallel, and answers with numbered citations" width="720" />
   </a>
   <br />
-  <sub><a href="docs/media/querymind-demo.mp4">Watch the full 97-second demo (MP4)</a>: a tour of the landing page, then a real, unscripted research run. The waiting parts of the run are sped up and labelled.</sub>
+  <sub><a href="docs/media/querymind-demo.mp4">Watch the full 97-second demo (MP4)</a>: a tour of the landing page, then a real, unscripted research run, narrated. The waiting parts of the run are sped up and labelled.</sub>
 </p>
 
 ---

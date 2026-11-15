@@ -66,7 +66,7 @@ The model client is the `openai` SDK pointed at Gemini's OpenAI-compatible endpo
 
 | Layer | Technology |
 |---|---|
-| Frontend | React 19, Vite, Tailwind CSS v4, shadcn/Radix UI, `react-markdown` |
+| Frontend | React 19, Vite, Tailwind CSS v4, `react-markdown` |
 | Landing page | Three.js, GSAP ScrollTrigger |
 | Backend | Python, FastAPI, Uvicorn, Server-Sent Events |
 | Model | Gemma 4 (`gemma-4-31b-it`) through the Gemini API's OpenAI-compatible endpoint |
@@ -143,7 +143,7 @@ QueryMind/
 ├── frontend/
 │   ├── src/
 │   │   ├── landing/         # Three.js + GSAP landing page and the Mote model
-│   │   ├── components/      # MoteGlyph, GoogleSignIn, shadcn UI primitives
+│   │   ├── components/      # MoteGlyph, GoogleSignIn
 │   │   ├── App.jsx          # Research app: SSE handling and layout
 │   │   ├── AnswerPanel.jsx  # Streaming answer and sources
 │   │   ├── HITLModal.jsx    # Clarifying-question dialog

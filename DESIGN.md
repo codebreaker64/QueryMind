@@ -28,7 +28,7 @@ Display: Bricolage Grotesque Variable (headlines, wordmark). Body and UI: Geist.
 
 ## Mote
 
-A soft apricot droplet with a little antenna, built from Three.js primitives in `frontend/src/landing/mote.js` (no external model is loaded at runtime). A rim-glow shader and an inner point light give the "thought" glow. Mote splits into four minis to show parallel search, peeks over the clarifying-question card, and waves at the call to action. `MoteGlyph.jsx` is the 2D SVG version used inside the app. Concept art: `docs/design/mote-concept.jpg`. An exported model is at `frontend/public/models/mote.glb`, and `frontend/mote-lab.html` renders Mote on its own for tweaking or re-exporting.
+A soft apricot droplet with a little antenna, built from Three.js primitives in `frontend/src/landing/mote.js` (no external model is loaded at runtime). A rim-glow shader and an inner point light give the "thought" glow. Mote splits into four minis to show parallel search, peeks over the clarifying-question card, and waves at the call to action. `MoteGlyph.jsx` is the 2D SVG version used inside the app. Concept art: `docs/design/mote-concept.jpg`. `frontend/mote-lab.html` renders Mote on its own for tweaking or re-exporting.
 
 ## Motion
 

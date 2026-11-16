@@ -66,7 +66,7 @@ The model client is the `openai` SDK pointed at Gemini's OpenAI-compatible endpo
 
 | Layer | Technology |
 |---|---|
-| Frontend | React 19, Vite, Tailwind CSS v4, shadcn/Radix UI, `react-markdown` |
+| Frontend | React 19, Vite, Tailwind CSS v4, `react-markdown` |
 | Landing page | Three.js, GSAP ScrollTrigger |
 | Backend | Python, FastAPI, Uvicorn, Server-Sent Events |
 | Model | Gemma 4 (`gemma-4-31b-it`) through the Gemini API's OpenAI-compatible endpoint |
@@ -143,7 +143,7 @@ QueryMind/
 ├── frontend/
 │   ├── src/
 │   │   ├── landing/         # Three.js + GSAP landing page and the Mote model
-│   │   ├── components/      # MoteGlyph, GoogleSignIn, shadcn UI primitives
+│   │   ├── components/      # MoteGlyph, GoogleSignIn
 │   │   ├── App.jsx          # Research app: SSE handling and layout
 │   │   ├── AnswerPanel.jsx  # Streaming answer and sources
 │   │   ├── HITLModal.jsx    # Clarifying-question dialog
@@ -151,9 +151,8 @@ QueryMind/
 │   │   ├── SearchBar.jsx
 │   │   └── SourceCard.jsx
 │   └── mote-lab.html        # Tweak and re-export the Mote model
-├── docs/media/              # Demo video, preview GIF and screenshots used in this README
+├── docs/media/              # Screenshots used in this README
 ├── DESIGN.md                # Design system
-├── PRODUCT.md               # Product brief
 └── .env.example
 ```
 
@@ -161,7 +160,7 @@ QueryMind/
 
 ## Design and the Mote mascot
 
-Mote is modelled by hand from Three.js primitives in `frontend/src/landing/mote.js`. On the landing page it splits into copies to show parallel search, pauses to ask a question, and lights up the answer as citations land. The page falls back to a still image without WebGL and to static end states when the visitor prefers reduced motion. The design system is in [DESIGN.md](DESIGN.md) and the product brief in [PRODUCT.md](PRODUCT.md). To adjust the model, run the dev server and open http://localhost:5173/mote-lab.html.
+Mote is modelled by hand from Three.js primitives in `frontend/src/landing/mote.js`. On the landing page it splits into copies to show parallel search, pauses to ask a question, and lights up the answer as citations land. The page falls back to a still image without WebGL and to static end states when the visitor prefers reduced motion. The design system is in [DESIGN.md](DESIGN.md). To adjust the model, run the dev server and open http://localhost:5173/mote-lab.html.
 
 ---
 
